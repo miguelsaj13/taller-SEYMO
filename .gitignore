@@ -1,0 +1,11 @@
+# Base de datos - NO subir
+*.db
+*.sqlite
+database/
+
+# Python
+__pycache__/
+*.pyc
+
+# VS Code
+.vscode/
