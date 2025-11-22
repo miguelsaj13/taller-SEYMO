@@ -36,6 +36,8 @@ class TallerSEYMO:
                 año INTEGER,
                 placa TEXT UNIQUE,
                 color TEXT,
+                proximo_mantenimiento DATE,
+                kilometraje_ultimo_mantenimiento REAL,
                 FOREIGN KEY (cliente_id) REFERENCES clientes(id)
             )
         ''')
@@ -244,6 +246,171 @@ class TallerSEYMO:
         except ValueError:
             print("❌ Por favor ingresa un número válido.")
             return None
+
+    # ========== NUEVAS FUNCIONES ==========
+    
+    def agregar_varios_vehiculos(self, cliente_id, cantidad):
+        """Agrega múltiples vehículos a un cliente"""
+        vehiculos_agregados = 0
+        
+        for i in range(cantidad):
+            print(f"\n--- Vehículo {i + 1} de {cantidad} ---")
+            marca = input("Marca del vehículo: ")
+            modelo = input("Modelo: ")
+            
+            año = self.pedir_numero("Año: ", "entero")
+            if año is None:
+                print("❌ Año inválido. Saltando este vehículo.")
+                continue
+                
+            placa = input("Placa: ")
+            if self.placa_existe(placa):
+                print("❌ Error: Ya existe un vehículo con esa placa. Saltando este vehículo.")
+                continue
+                
+            color = input("Color (opcional): ") or None
+            
+            # Preguntar por próximo mantenimiento
+            print("Próximo mantenimiento (opcional):")
+            print("  Formato: YYYY-MM-DD o días desde hoy (ej: 30 para 30 días)")
+            mantenimiento_input = input("  Fecha o días: ")
+            
+            proximo_mantenimiento = None
+            if mantenimiento_input:
+                try:
+                    # Si es un número, calcular días desde hoy
+                    if mantenimiento_input.isdigit():
+                        dias = int(mantenimiento_input)
+                        proximo_mantenimiento = (datetime.now() + timedelta(days=dias)).date()
+                    else:
+                        # Si es una fecha, validar formato
+                        proximo_mantenimiento = datetime.strptime(mantenimiento_input, '%Y-%m-%d').date()
+                except ValueError:
+                    print("  ❌ Formato inválido. No se asignó mantenimiento.")
+            
+            resultado = self.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color)
+            if "✅" in resultado:
+                vehiculos_agregados += 1
+                print(resultado)
+                
+                # Actualizar el mantenimiento si se especificó
+                if proximo_mantenimiento:
+                    cursor = self.conn.cursor()
+                    cursor.execute('SELECT id FROM vehiculos WHERE placa = ?', (placa,))
+                    vehiculo_id = cursor.fetchone()[0]
+                    cursor.execute('UPDATE vehiculos SET proximo_mantenimiento = ? WHERE id = ?', 
+                                 (proximo_mantenimiento, vehiculo_id))
+                    self.conn.commit()
+                    print(f"  📅 Próximo mantenimiento: {proximo_mantenimiento}")
+            else:
+                print(resultado)
+        
+        return f"✅ Se agregaron {vehiculos_agregados} de {cantidad} vehículos"
+
+    def obtener_recordatorios_mantenimiento(self, dias=30):
+        """Obtiene vehículos con mantenimiento próximo en los próximos X días"""
+        cursor = self.conn.cursor()
+        fecha_limite = datetime.now() + timedelta(days=dias)
+        
+        cursor.execute('''
+            SELECT v.placa, v.marca, v.modelo, v.proximo_mantenimiento, c.nombre, c.telefono
+            FROM vehiculos v
+            JOIN clientes c ON v.cliente_id = c.id
+            WHERE v.proximo_mantenimiento IS NOT NULL 
+            AND v.proximo_mantenimiento <= ?
+            ORDER BY v.proximo_mantenimiento ASC
+        ''', (fecha_limite.date(),))
+        
+        return cursor.fetchall()
+
+    def reporte_periodo_historico(self, año, periodo='año'):
+        """Genera reportes para años pasados"""
+        cursor = self.conn.cursor()
+        
+        if periodo == 'año':
+            fecha_inicio = datetime(año, 1, 1)
+            fecha_fin = datetime(año, 12, 31)
+        elif periodo == 'mes':
+            fecha_inicio = datetime(año, datetime.now().month, 1)
+            fecha_fin = datetime(año, datetime.now().month, 1) + timedelta(days=32)
+            fecha_fin = fecha_fin.replace(day=1) - timedelta(days=1)
+        else:  # 'semana' - para años pasados es menos útil
+            fecha_inicio = datetime(año, 1, 1)
+            fecha_fin = datetime(año, 12, 31)
+        
+        # Datos básicos
+        cursor.execute('''
+            SELECT SUM(precio_final), SUM(horas_trabajadas), COUNT(*)
+            FROM ordenes_trabajo 
+            WHERE fecha_fin BETWEEN ? AND ?
+        ''', (fecha_inicio.date(), fecha_fin.date()))
+        
+        ganancias, horas, trabajos = cursor.fetchone()
+        
+        # Servicios más solicitados
+        cursor.execute('''
+            SELECT tipo_servicio, COUNT(*), SUM(precio_final)
+            FROM ordenes_trabajo 
+            WHERE fecha_fin BETWEEN ? AND ?
+            GROUP BY tipo_servicio
+            ORDER BY COUNT(*) DESC
+            LIMIT 5
+        ''', (fecha_inicio.date(), fecha_fin.date()))
+        
+        servicios_populares = cursor.fetchall()
+        
+        return {
+            'ganancias': ganancias or 0,
+            'horas_trabajadas': horas or 0,
+            'trabajos_completados': trabajos or 0,
+            'periodo': periodo,
+            'año': año,
+            'fecha_inicio': fecha_inicio.date(),
+            'fecha_fin': fecha_fin.date(),
+            'servicios_populares': servicios_populares
+        }
+
+    def proyeccion_crecimiento(self):
+        """Genera proyecciones de crecimiento basadas en datos históricos"""
+        cursor = self.conn.cursor()
+        
+        # Obtener datos de los últimos 12 meses
+        fecha_inicio = datetime.now().replace(day=1) - timedelta(days=365)
+        
+        cursor.execute('''
+            SELECT strftime('%Y-%m', fecha_fin) as mes, 
+                   SUM(precio_final) as ingresos,
+                   COUNT(*) as trabajos
+            FROM ordenes_trabajo 
+            WHERE fecha_fin >= ?
+            GROUP BY mes
+            ORDER BY mes
+        ''', (fecha_inicio.date(),))
+        
+        datos_mensuales = cursor.fetchall()
+        
+        if len(datos_mensuales) < 3:
+            return None  # No hay suficientes datos
+        
+        # Calcular crecimiento promedio
+        ingresos = [d[1] for d in datos_mensuales]
+        crecimiento_promedio = sum((ingresos[i] - ingresos[i-1]) / ingresos[i-1] 
+                                 for i in range(1, len(ingresos))) / (len(ingresos) - 1)
+        
+        # Proyección para los próximos 6 meses
+        ultimo_ingreso = ingresos[-1]
+        proyecciones = []
+        
+        for i in range(1, 7):
+            mes_proyectado = (datetime.now() + timedelta(days=30*i)).strftime('%Y-%m')
+            ingreso_proyectado = ultimo_ingreso * (1 + crecimiento_promedio) ** i
+            proyecciones.append((mes_proyectado, ingreso_proyectado))
+        
+        return {
+            'crecimiento_promedio': crecimiento_promedio,
+            'proyecciones': proyecciones,
+            'datos_historicos': datos_mensuales
+        }
     
     # ========== FUNCIONES PRINCIPALES ==========
     
@@ -547,52 +714,13 @@ class TallerSEYMO:
         
         servicios_populares = cursor.fetchall()
         
-        # Rentabilidad por tipo de servicio
-        cursor.execute('''
-            SELECT tipo_servicio, 
-                   COUNT(*) as cantidad,
-                   SUM(precio_final) as ingresos,
-                   AVG(precio_final - (costo_repuestos + costo_mano_obra)) as margen_promedio
-            FROM ordenes_trabajo 
-            WHERE fecha_fin >= ?
-            GROUP BY tipo_servicio
-            ORDER BY margen_promedio DESC
-        ''', (fecha_inicio.date(),))
-        
-        rentabilidad = cursor.fetchall()
-        
         return {
             'ganancias': ganancias or 0,
             'horas_trabajadas': horas or 0,
             'trabajos_completados': trabajos or 0,
             'periodo': periodo,
             'fecha_inicio': fecha_inicio.date(),
-            'servicios_populares': servicios_populares,
-            'rentabilidad_servicios': rentabilidad
-        }
-    
-    # PREDICCIÓN TEMPORADAS ALTAS
-    def prediccion_temporadas(self):
-        cursor = self.conn.cursor()
-        
-        # Análisis histórico por mes
-        cursor.execute('''
-            SELECT strftime('%m', fecha_fin) as mes, 
-                   COUNT(*) as trabajos,
-                   SUM(precio_final) as ingresos
-            FROM ordenes_trabajo 
-            GROUP BY mes
-            ORDER BY ingresos DESC
-        ''')
-        
-        analisis_mensual = cursor.fetchall()
-        
-        # Meses más ocupados (top 3)
-        meses_altos = analisis_mensual[:3] if analisis_mensual else []
-        
-        return {
-            'meses_altos': meses_altos,
-            'analisis_completo': analisis_mensual
+            'servicios_populares': servicios_populares
         }
     
     # FUNCIONES PARA LISTAR
@@ -601,7 +729,7 @@ class TallerSEYMO:
         cursor.execute('SELECT id, nombre FROM empleados ORDER BY nombre')
         return cursor.fetchall()
 
-# INTERFAZ MEJORADA CON TODAS LAS MEJORAS
+# INTERFAZ MEJORADA CON TODAS LAS NUEVAS FUNCIONALIDADES
 def menu_principal():
     taller = TallerSEYMO()
     
@@ -611,7 +739,7 @@ def menu_principal():
         print("="*50)
         
         print("📝 CREAR Y REGISTRAR")
-        print("  1. Nuevo Cliente + Vehículo")
+        print("  1. Nuevo Cliente + Vehículos")
         print("  2. Nuevo Empleado")
         print("  3. Nueva Orden de Trabajo")
         print("  4. Añadir Vehículo a Cliente Existente")
@@ -629,6 +757,9 @@ def menu_principal():
         print("\n📊 REPORTES Y ANÁLISIS")
         print("  11. Ver Reportes Avanzados")
         
+        print("\n🔔 MANTENIMIENTO")
+        print("  12. Recordatorios de Mantenimiento")
+        
         print("\n  0. Salir del Sistema")
         print("="*50)
         
@@ -636,7 +767,7 @@ def menu_principal():
         
         # 📝 CREAR Y REGISTRAR
         if opcion == "1":
-            print("\n📝 REGISTRAR NUEVO CLIENTE Y VEHÍCULO")
+            print("\n📝 REGISTRAR NUEVO CLIENTE Y VEHÍCULOS")
             nombre = input("Nombre del cliente: ")
             telefono = taller.pedir_telefono("Teléfono (opcional, Enter para omitir): ")
             
@@ -647,23 +778,14 @@ def menu_principal():
                 
             print(f"✅ Cliente '{nombre}' agregado (ID: {cliente_id})")
             
-            print("\n--- Registrar primer vehículo ---")
-            marca = input("Marca del vehículo: ")
-            modelo = input("Modelo: ")
+            # Preguntar cuántos vehículos agregar
+            cantidad_vehiculos = taller.pedir_numero("\n¿Cuántos vehículos deseas agregar? ", "entero")
+            if cantidad_vehiculos is None or cantidad_vehiculos <= 0:
+                print("❌ Cantidad inválida. Se agregará 1 vehículo por defecto.")
+                cantidad_vehiculos = 1
             
-            año = taller.pedir_numero("Año: ", "entero")
-            if año is None:
-                continue
-                
-            placa = input("Placa: ")
-            if taller.placa_existe(placa):
-                print("❌ Error: Ya existe un vehículo con esa placa.")
-                continue
-                
-            color = input("Color (opcional): ") or None
-            
-            resultado = taller.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color)
-            print(resultado)
+            resultado = taller.agregar_varios_vehiculos(cliente_id, cantidad_vehiculos)
+            print(f"\n{resultado}")
             
         elif opcion == "2":
             print("\n📝 REGISTRAR NUEVO EMPLEADO")
@@ -870,7 +992,8 @@ def menu_principal():
             print("  1. 📈 Reporte Semanal")
             print("  2. 📅 Reporte Mensual") 
             print("  3. 🗓️ Reporte Anual")
-            print("  4. 🔮 Predicción Temporadas Altas")
+            print("  4. 📊 Reportes de Años Pasados")
+            print("  5. 📈 Proyección de Crecimiento")
             print("  0. ↩️ Volver al menú principal")
             
             sub_opcion = input("\nSelecciona reporte: ")
@@ -890,24 +1013,87 @@ def menu_principal():
                     print(f"\n  🏆 SERVICIOS MÁS SOLICITADOS:")
                     for servicio in reporte['servicios_populares']:
                         print(f"    • {servicio[0]}: {servicio[1]} trabajos - ${servicio[2]:,.2f}")
-                
-                if reporte['rentabilidad_servicios']:
-                    print(f"\n  💵 RENTABILIDAD POR SERVICIO:")
-                    for servicio in reporte['rentabilidad_servicios']:
-                        print(f"    • {servicio[0]}: ${servicio[3]:.2f} margen promedio")
                         
             elif sub_opcion == "4":
-                prediccion = taller.prediccion_temporadas()
-                print(f"\n🔮 PREDICCIÓN TEMPORADAS ALTAS:")
-                if prediccion['meses_altos']:
-                    print("  📈 Meses con mayor actividad histórica:")
-                    for mes in prediccion['meses_altos']:
-                        nombre_mes = datetime(2024, int(mes[0]), 1).strftime('%B')
-                        print(f"    • {nombre_mes}: {mes[1]} trabajos - ${mes[2]:,.2f} ingresos")
+                print("\n📊 REPORTES DE AÑOS PASADOS")
+                año = taller.pedir_numero("¿Qué año deseas consultar? (ej: 2023): ", "entero")
+                if año is None:
+                    continue
+                    
+                reporte = taller.reporte_periodo_historico(año)
+                
+                print(f"\n📈 REPORTE ANUAL {año}")
+                print(f"  💰 Ganancias: ${reporte['ganancias']:,.2f}")
+                print(f"  ⏰ Horas trabajadas: {reporte['horas_trabajadas']} hrs")
+                print(f"  🔧 Trabajos completados: {reporte['trabajos_completados']}")
+                
+                if reporte['servicios_populares']:
+                    print(f"\n  🏆 SERVICIOS MÁS SOLICITADOS:")
+                    for servicio in reporte['servicios_populares']:
+                        print(f"    • {servicio[0]}: {servicio[1]} trabajos - ${servicio[2]:,.2f}")
+                        
+            elif sub_opcion == "5":
+                print("\n📈 PROYECCIÓN DE CRECIMIENTO")
+                proyeccion = taller.proyeccion_crecimiento()
+                
+                if proyeccion is None:
+                    print("❌ No hay suficientes datos históricos para generar proyecciones.")
+                    print("   Se necesitan al menos 3 meses de datos.")
+                    continue
+                
+                print(f"\n📊 ANÁLISIS DE CRECIMIENTO")
+                print(f"  📈 Crecimiento promedio mensual: {proyeccion['crecimiento_promedio']*100:.1f}%")
+                
+                print(f"\n🎯 PROYECCIÓN PRÓXIMOS 6 MESES:")
+                for mes, ingreso in proyeccion['proyecciones']:
+                    print(f"  • {mes}: ${ingreso:,.2f}")
+                
+                print(f"\n💡 RECOMENDACIÓN:")
+                if proyeccion['crecimiento_promedio'] > 0.1:
+                    print("  ¡Excelente crecimiento! Considera expandir capacidad.")
+                elif proyeccion['crecimiento_promedio'] > 0.05:
+                    print("  Crecimiento saludable. Mantén la estrategia actual.")
                 else:
-                    print("  ℹ️ No hay suficiente datos históricos para predicciones")
+                    print("  Crecimiento lento. Considera promociones o nuevos servicios.")
             else:
                 print("❌ Opción no válida")
+        
+        # 🔔 MANTENIMIENTO
+        elif opcion == "12":
+            print("\n🔔 RECORDATORIOS DE MANTENIMIENTO")
+            print("  1. Próximos 30 días")
+            print("  2. Próximos 60 días")
+            print("  3. Personalizado")
+            print("  0. ↩️ Volver")
+            
+            sub_opcion = input("\nSelecciona período: ")
+            
+            if sub_opcion == "0":
+                continue
+            elif sub_opcion == "1":
+                dias = 30
+            elif sub_opcion == "2":
+                dias = 60
+            elif sub_opcion == "3":
+                dias = taller.pedir_numero("¿Cuántos días? ", "entero")
+                if dias is None:
+                    continue
+            else:
+                print("❌ Opción inválida")
+                continue
+            
+            recordatorios = taller.obtener_recordatorios_mantenimiento(dias)
+            
+            if recordatorios:
+                print(f"\n🔔 VEHÍCULOS CON MANTENIMIENTO PRÓXIMO ({dias} días):")
+                for vehiculo in recordatorios:
+                    dias_restantes = (vehiculo[3] - datetime.now().date()).days
+                    print(f"  🚗 {vehiculo[1]} {vehiculo[2]} - Placa: {vehiculo[0]}")
+                    print(f"     👤 Cliente: {vehiculo[4]} - Tel: {vehiculo[5] or 'No tiene'}")
+                    print(f"     📅 {vehiculo[3]} ({dias_restantes} días restantes)")
+                    print("     " + "-" * 40)
+            else:
+                print(f"\n✅ No hay vehículos con mantenimiento programado en los próximos {dias} días.")
                 
         elif opcion == "0":
             print("\n👋 ¡Gracias por usar el Sistema de Gestión del Taller SEYMO!")
