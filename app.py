@@ -21,7 +21,7 @@ class TallerSEYMO:
             CREATE TABLE IF NOT EXISTS clientes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre TEXT NOT NULL,
-                telefono TEXT,
+                telefono TEXT UNIQUE,
                 fecha_registro DATE DEFAULT CURRENT_DATE
             )
         ''')
@@ -44,7 +44,7 @@ class TallerSEYMO:
             CREATE TABLE IF NOT EXISTS empleados (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre TEXT NOT NULL,
-                telefono TEXT
+                telefono TEXT UNIQUE
             )
         ''')
         
@@ -71,8 +71,94 @@ class TallerSEYMO:
         
         self.conn.commit()
         print("✅ Tablas creadas/verificadas correctamente")
+
+    # ========== FUNCIONES DE VALIDACIÓN ==========
     
-    # FUNCIONES DE VALIDACIÓN
+    def validar_numero(self, valor, tipo="entero"):
+        """Valida que el valor sea un número válido"""
+        try:
+            if tipo == "entero":
+                return int(valor)
+            elif tipo == "decimal":
+                return float(valor)
+            else:
+                return valor
+        except ValueError:
+            return None
+
+    def validar_telefono(self, telefono):
+        """Valida que el teléfono contenga solo números y tenga longitud razonable"""
+        if telefono is None or telefono.strip() == "":
+            return None
+        
+        # Remover espacios, guiones, paréntesis
+        telefono_limpio = ''.join(filter(str.isdigit, telefono))
+        
+        if len(telefono_limpio) < 7 or len(telefono_limpio) > 15:
+            return None
+        
+        return telefono_limpio
+
+    def pedir_numero(self, mensaje, tipo="entero", intentos=3):
+        """Pide un número al usuario con reintentos"""
+        for intento in range(intentos):
+            try:
+                valor = input(mensaje)
+                if tipo == "entero":
+                    return int(valor)
+                elif tipo == "decimal":
+                    return float(valor)
+            except ValueError:
+                intentos_restantes = intentos - intento - 1
+                if intentos_restantes > 0:
+                    print(f"❌ Error: Debes ingresar un número {'entero' if tipo == 'entero' else 'decimal'}. Te quedan {intentos_restantes} intentos.")
+                else:
+                    print("❌ Has agotado todos los intentos. Volviendo al menú principal.")
+                    return None
+        return None
+
+    def pedir_telefono(self, mensaje, obligatorio=False):
+        """Pide un teléfono con validación y verificación de duplicados"""
+        while True:
+            telefono = input(mensaje)
+            
+            if not obligatorio and telefono.strip() == "":
+                return None
+            
+            if obligatorio and telefono.strip() == "":
+                print("❌ El teléfono es obligatorio para esta operación.")
+                continue
+            
+            telefono_validado = self.validar_telefono(telefono)
+            if not telefono_validado:
+                print("❌ Error: El teléfono debe contener solo números (7-15 dígitos). Ejemplo: 1234567890")
+                continue
+            
+            # Verificar si el teléfono ya existe
+            if self.telefono_existe(telefono_validado):
+                print("❌ Error: Este número de teléfono ya está registrado en el sistema.")
+                continue
+            
+            return telefono_validado
+
+    def telefono_existe(self, telefono):
+        """Verifica si un teléfono ya existe en clientes o empleados"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id FROM clientes WHERE telefono = ?', (telefono,))
+        if cursor.fetchone():
+            return True
+        
+        cursor.execute('SELECT id FROM empleados WHERE telefono = ?', (telefono,))
+        return cursor.fetchone() is not None
+
+    def placa_existe(self, placa):
+        """Verifica si una placa ya existe"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id FROM vehiculos WHERE placa = ?', (placa,))
+        return cursor.fetchone() is not None
+
+    # ========== FUNCIONES DE VALIDACIÓN DE EXISTENCIA ==========
+    
     def cliente_existe(self, cliente_id):
         cursor = self.conn.cursor()
         cursor.execute('SELECT id FROM clientes WHERE id = ?', (cliente_id,))
@@ -93,18 +179,92 @@ class TallerSEYMO:
         cursor.execute('SELECT id FROM ordenes_trabajo WHERE id = ?', (orden_id,))
         return cursor.fetchone() is not None
     
+    # ========== FUNCIONES DE BÚSQUEDA MEJORADAS ==========
+    
+    def buscar_cliente_por_nombre(self, nombre_buscar):
+        """Busca clientes por nombre y muestra todos los resultados"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT id, nombre, telefono FROM clientes 
+            WHERE nombre LIKE ? 
+            ORDER BY nombre
+        ''', (f'%{nombre_buscar}%',))
+        return cursor.fetchall()
+    
+    def seleccionar_cliente_interactivo(self):
+        """Permite al usuario buscar y seleccionar un cliente interactivamente"""
+        while True:
+            nombre_buscar = input("\n🔍 Nombre del cliente a buscar (Enter para cancelar): ")
+            if nombre_buscar.strip() == "":
+                return None
+            
+            clientes = self.buscar_cliente_por_nombre(nombre_buscar)
+            
+            if not clientes:
+                print("❌ No se encontraron clientes con ese nombre.")
+                continue
+            
+            print(f"\n✅ Se encontraron {len(clientes)} cliente(s):")
+            for i, cliente in enumerate(clientes, 1):
+                print(f"   {i}. ID: {cliente[0]} - {cliente[1]} - Tel: {cliente[2] or 'No tiene'}")
+            
+            try:
+                seleccion = input(f"\nSelecciona un cliente (1-{len(clientes)}) o 0 para buscar de nuevo: ")
+                if seleccion == "0":
+                    continue
+                
+                idx = int(seleccion) - 1
+                if 0 <= idx < len(clientes):
+                    return clientes[idx][0]  # Retorna el ID del cliente seleccionado
+                else:
+                    print("❌ Selección inválida.")
+            except ValueError:
+                print("❌ Por favor ingresa un número válido.")
+    
+    def seleccionar_vehiculo_interactivo(self, cliente_id):
+        """Permite seleccionar un vehículo de un cliente"""
+        vehiculos = self.obtener_vehiculos_cliente(cliente_id)
+        
+        if not vehiculos:
+            print("❌ Este cliente no tiene vehículos registrados.")
+            return None
+        
+        print(f"\n🚗 Vehículos del cliente:")
+        for i, vehiculo in enumerate(vehiculos, 1):
+            print(f"   {i}. {vehiculo[1]} {vehiculo[2]} {vehiculo[3]} - Placa: {vehiculo[4]}")
+        
+        try:
+            seleccion = input(f"\nSelecciona un vehículo (1-{len(vehiculos)}): ")
+            idx = int(seleccion) - 1
+            if 0 <= idx < len(vehiculos):
+                return vehiculos[idx][0]  # Retorna el ID del vehículo
+            else:
+                print("❌ Selección inválida.")
+                return None
+        except ValueError:
+            print("❌ Por favor ingresa un número válido.")
+            return None
+    
+    # ========== FUNCIONES PRINCIPALES ==========
+    
     # 1. AÑADIR CLIENTE NUEVO
     def agregar_cliente(self, nombre, telefono=None):
         cursor = self.conn.cursor()
-        cursor.execute('INSERT INTO clientes (nombre, telefono) VALUES (?, ?)', 
-                      (nombre, telefono))
-        self.conn.commit()
-        return cursor.lastrowid
+        try:
+            cursor.execute('INSERT INTO clientes (nombre, telefono) VALUES (?, ?)', 
+                          (nombre, telefono))
+            self.conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            return None
     
     # AÑADIR VEHÍCULO A CLIENTE
     def agregar_vehiculo(self, cliente_id, marca, modelo, año, placa, color=None):
         if not self.cliente_existe(cliente_id):
             return "❌ Error: El cliente no existe"
+        
+        if self.placa_existe(placa):
+            return "❌ Error: Ya existe un vehículo con esa placa"
         
         cursor = self.conn.cursor()
         try:
@@ -118,24 +278,56 @@ class TallerSEYMO:
             return "❌ Error: Ya existe un vehículo con esa placa"
     
     # 2. AÑADIR EMPLEADO NUEVO
-    def agregar_empleado(self, nombre, telefono=None):
+    def agregar_empleado(self, nombre, telefono):
         cursor = self.conn.cursor()
-        cursor.execute('INSERT INTO empleados (nombre, telefono) VALUES (?, ?)', 
-                      (nombre, telefono))
-        self.conn.commit()
-        return f"✅ Empleado '{nombre}' agregado (ID: {cursor.lastrowid})"
+        try:
+            cursor.execute('INSERT INTO empleados (nombre, telefono) VALUES (?, ?)', 
+                          (nombre, telefono))
+            self.conn.commit()
+            return f"✅ Empleado '{nombre}' agregado (ID: {cursor.lastrowid})"
+        except sqlite3.IntegrityError:
+            return "❌ Error: Ya existe un empleado con ese teléfono"
     
-    # NUEVO: EDITAR EMPLEADO
-    def editar_empleado(self, empleado_id, nuevo_nombre, nuevo_telefono):
+    # EDITAR EMPLEADO INTERACTIVO
+    def editar_empleado_interactivo(self, empleado_id):
         if not self.empleado_existe(empleado_id):
             return "❌ Error: El empleado no existe"
         
         cursor = self.conn.cursor()
-        cursor.execute('''
-            UPDATE empleados SET nombre = ?, telefono = ? WHERE id = ?
-        ''', (nuevo_nombre, nuevo_telefono, empleado_id))
-        self.conn.commit()
-        return f"✅ Empleado ID {empleado_id} actualizado"
+        cursor.execute('SELECT nombre, telefono FROM empleados WHERE id = ?', (empleado_id,))
+        empleado_actual = cursor.fetchone()
+        
+        print(f"\n📝 Editando empleado: {empleado_actual[0]}")
+        print("¿Qué deseas editar?")
+        print("1. Nombre")
+        print("2. Teléfono")
+        print("3. Ambos")
+        print("4. Cancelar")
+        
+        opcion = input("\nSelecciona una opción: ")
+        
+        nuevo_nombre = empleado_actual[0]
+        nuevo_telefono = empleado_actual[1]
+        
+        if opcion in ["1", "3"]:
+            nuevo_nombre = input("Nuevo nombre: ")
+        
+        if opcion in ["2", "3"]:
+            nuevo_telefono = self.pedir_telefono("Nuevo teléfono: ", obligatorio=True)
+            if nuevo_telefono is None:
+                return "❌ Edición cancelada"
+        
+        if opcion == "4":
+            return "ℹ️ Edición cancelada"
+        
+        try:
+            cursor.execute('''
+                UPDATE empleados SET nombre = ?, telefono = ? WHERE id = ?
+            ''', (nuevo_nombre, nuevo_telefono, empleado_id))
+            self.conn.commit()
+            return f"✅ Empleado ID {empleado_id} actualizado"
+        except sqlite3.IntegrityError:
+            return "❌ Error: Ya existe un empleado con ese teléfono"
     
     # 3. AÑADIR ORDEN NUEVA (MEJORADA)
     def agregar_orden(self, numero_orden, vehiculo_id, empleado_id, descripcion_trabajo, 
@@ -169,64 +361,96 @@ class TallerSEYMO:
         self.conn.commit()
         return f"✅ Orden #{numero_orden} agregada - Total: ${precio_final}"
     
-    # EDITAR CLIENTE (MEJORADO CON VALIDACIÓN)
-    def editar_cliente(self, cliente_id, nuevo_nombre, nuevo_telefono):
+    # EDITAR CLIENTE INTERACTIVO
+    def editar_cliente_interactivo(self, cliente_id):
         if not self.cliente_existe(cliente_id):
             return "❌ Error: El cliente no existe"
         
         cursor = self.conn.cursor()
-        cursor.execute('''
-            UPDATE clientes SET nombre = ?, telefono = ? WHERE id = ?
-        ''', (nuevo_nombre, nuevo_telefono, cliente_id))
-        self.conn.commit()
-        return f"✅ Cliente ID {cliente_id} actualizado"
-    
-    # EDITAR ORDEN (MEJORADO CON VALIDACIÓN)
-    def editar_orden(self, orden_id, nueva_descripcion=None, nuevo_precio_final=None,
-                    nuevo_tipo_servicio=None, nuevo_kilometraje=None):
+        cursor.execute('SELECT nombre, telefono FROM clientes WHERE id = ?', (cliente_id,))
+        cliente_actual = cursor.fetchone()
         
+        print(f"\n📝 Editando cliente: {cliente_actual[0]}")
+        print("¿Qué deseas editar?")
+        print("1. Nombre")
+        print("2. Teléfono")
+        print("3. Ambos")
+        print("4. Cancelar")
+        
+        opcion = input("\nSelecciona una opción: ")
+        
+        nuevo_nombre = cliente_actual[0]
+        nuevo_telefono = cliente_actual[1]
+        
+        if opcion in ["1", "3"]:
+            nuevo_nombre = input("Nuevo nombre: ")
+        
+        if opcion in ["2", "3"]:
+            nuevo_telefono = self.pedir_telefono("Nuevo teléfono (opcional, Enter para mantener actual): ")
+        
+        if opcion == "4":
+            return "ℹ️ Edición cancelada"
+        
+        try:
+            cursor.execute('''
+                UPDATE clientes SET nombre = ?, telefono = ? WHERE id = ?
+            ''', (nuevo_nombre, nuevo_telefono, cliente_id))
+            self.conn.commit()
+            return f"✅ Cliente ID {cliente_id} actualizado"
+        except sqlite3.IntegrityError:
+            return "❌ Error: Ya existe un cliente con ese teléfono"
+    
+    # EDITAR ORDEN INTERACTIVO
+    def editar_orden_interactivo(self, orden_id):
         if not self.orden_existe(orden_id):
             return "❌ Error: La orden no existe"
         
         cursor = self.conn.cursor()
-        
-        updates = []
-        params = []
-        
-        if nueva_descripcion:
-            updates.append("descripcion_trabajo = ?")
-            params.append(nueva_descripcion)
-        
-        if nuevo_precio_final is not None:
-            updates.append("precio_final = ?")
-            params.append(nuevo_precio_final)
-        
-        if nuevo_tipo_servicio:
-            updates.append("tipo_servicio = ?")
-            params.append(nuevo_tipo_servicio)
-            
-        if nuevo_kilometraje is not None:
-            updates.append("kilometraje = ?")
-            params.append(nuevo_kilometraje)
-        
-        if updates:
-            query = f"UPDATE ordenes_trabajo SET {', '.join(updates)} WHERE id = ?"
-            params.append(orden_id)
-            cursor.execute(query, params)
-            self.conn.commit()
-            return f"✅ Orden #{orden_id} actualizada"
-        else:
-            return "ℹ️ No se especificaron cambios"
-    
-    # 4. BUSCAR CLIENTE POR NOMBRE
-    def buscar_cliente(self, nombre_buscar):
-        cursor = self.conn.cursor()
         cursor.execute('''
-            SELECT id, nombre, telefono FROM clientes 
-            WHERE nombre LIKE ? 
-            ORDER BY nombre
-        ''', (f'%{nombre_buscar}%',))
-        return cursor.fetchall()
+            SELECT descripcion_trabajo, precio_final, tipo_servicio, kilometraje 
+            FROM ordenes_trabajo WHERE id = ?
+        ''', (orden_id,))
+        orden_actual = cursor.fetchone()
+        
+        print(f"\n📝 Editando orden #{orden_id}")
+        print("¿Qué deseas editar?")
+        print("1. Descripción del trabajo")
+        print("2. Precio final")
+        print("3. Tipo de servicio")
+        print("4. Kilometraje")
+        print("5. Cancelar")
+        
+        opcion = input("\nSelecciona una opción: ")
+        
+        nueva_descripcion = orden_actual[0]
+        nuevo_precio = orden_actual[1]
+        nuevo_tipo = orden_actual[2]
+        nuevo_km = orden_actual[3]
+        
+        if opcion == "1":
+            nueva_descripcion = input("Nueva descripción: ")
+        elif opcion == "2":
+            nuevo_precio = self.pedir_numero("Nuevo precio: ", "decimal")
+            if nuevo_precio is None:
+                return "❌ Edición cancelada"
+        elif opcion == "3":
+            nuevo_tipo = input("Nuevo tipo de servicio: ")
+        elif opcion == "4":
+            nuevo_km = self.pedir_numero("Nuevo kilometraje: ", "decimal")
+            if nuevo_km is None:
+                return "❌ Edición cancelada"
+        elif opcion == "5":
+            return "ℹ️ Edición cancelada"
+        else:
+            return "❌ Opción inválida"
+        
+        cursor.execute('''
+            UPDATE ordenes_trabajo 
+            SET descripcion_trabajo = ?, precio_final = ?, tipo_servicio = ?, kilometraje = ?
+            WHERE id = ?
+        ''', (nueva_descripcion, nuevo_precio, nuevo_tipo, nuevo_km, orden_id))
+        self.conn.commit()
+        return f"✅ Orden #{orden_id} actualizada"
     
     # OBTENER VEHÍCULOS DE CLIENTE
     def obtener_vehiculos_cliente(self, cliente_id):
@@ -238,7 +462,7 @@ class TallerSEYMO:
         ''', (cliente_id,))
         return cursor.fetchall()
     
-    # 5. DETALLES DEL CLIENTE MEJORADO
+    # DETALLES DEL CLIENTE MEJORADO
     def detalles_cliente(self, cliente_id):
         if not self.cliente_existe(cliente_id):
             return None
@@ -291,7 +515,7 @@ class TallerSEYMO:
             'ordenes': ordenes
         }
     
-    # 6. REPORTES MEJORADOS
+    # REPORTES MEJORADOS
     def reporte_periodo(self, periodo='semana'):
         cursor = self.conn.cursor()
         
@@ -377,7 +601,7 @@ class TallerSEYMO:
         cursor.execute('SELECT id, nombre FROM empleados ORDER BY nombre')
         return cursor.fetchall()
 
-# INTERFAZ MEJORADA
+# INTERFAZ MEJORADA CON TODAS LAS MEJORAS
 def menu_principal():
     taller = TallerSEYMO()
     
@@ -393,18 +617,17 @@ def menu_principal():
         print("  4. Añadir Vehículo a Cliente Existente")
         
         print("\n🔍 BUSCAR Y CONSULTAR")
-        print("  5. Buscar Cliente")
-        print("  6. Ver Detalles de Cliente")
-        print("  7. Ver Historial por Vehículo")
-        print("  8. Buscar Orden por ID")
+        print("  5. Buscar y Ver Cliente")
+        print("  6. Ver Historial por Vehículo")
+        print("  7. Buscar Orden por ID")
         
         print("\n✏️ EDITAR Y ACTUALIZAR")
-        print("  9. Editar Cliente")
-        print("  10. Editar Empleado")
-        print("  11. Editar Orden")
+        print("  8. Editar Cliente")
+        print("  9. Editar Empleado")
+        print("  10. Editar Orden")
         
         print("\n📊 REPORTES Y ANÁLISIS")
-        print("  12. Ver Reportes Avanzados")
+        print("  11. Ver Reportes Avanzados")
         
         print("\n  0. Salir del Sistema")
         print("="*50)
@@ -415,225 +638,234 @@ def menu_principal():
         if opcion == "1":
             print("\n📝 REGISTRAR NUEVO CLIENTE Y VEHÍCULO")
             nombre = input("Nombre del cliente: ")
-            telefono = input("Teléfono (opcional): ")
-            cliente_id = taller.agregar_cliente(nombre, telefono or None)
+            telefono = taller.pedir_telefono("Teléfono (opcional, Enter para omitir): ")
+            
+            cliente_id = taller.agregar_cliente(nombre, telefono)
+            if cliente_id is None:
+                print("❌ Error: Ya existe un cliente con ese teléfono.")
+                continue
+                
             print(f"✅ Cliente '{nombre}' agregado (ID: {cliente_id})")
             
             print("\n--- Registrar primer vehículo ---")
             marca = input("Marca del vehículo: ")
             modelo = input("Modelo: ")
-            año = input("Año: ")
-            placa = input("Placa: ")
-            color = input("Color (opcional): ")
             
-            resultado = taller.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color or None)
+            año = taller.pedir_numero("Año: ", "entero")
+            if año is None:
+                continue
+                
+            placa = input("Placa: ")
+            if taller.placa_existe(placa):
+                print("❌ Error: Ya existe un vehículo con esa placa.")
+                continue
+                
+            color = input("Color (opcional): ") or None
+            
+            resultado = taller.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color)
             print(resultado)
             
         elif opcion == "2":
             print("\n📝 REGISTRAR NUEVO EMPLEADO")
             nombre = input("Nombre del empleado: ")
-            telefono = input("Teléfono (opcional): ")
-            resultado = taller.agregar_empleado(nombre, telefono or None)
+            telefono = taller.pedir_telefono("Teléfono (obligatorio): ", obligatorio=True)
+            if telefono is None:
+                continue
+                
+            resultado = taller.agregar_empleado(nombre, telefono)
             print(resultado)
             
         elif opcion == "3":
             print("\n📝 CREAR NUEVA ORDEN DE TRABAJO")
-            print("--- Lista de Empleados ---")
+            
+            # Buscar cliente interactivamente
+            cliente_id = taller.seleccionar_cliente_interactivo()
+            if cliente_id is None:
+                continue
+                
+            # Seleccionar vehículo
+            vehiculo_id = taller.seleccionar_vehiculo_interactivo(cliente_id)
+            if vehiculo_id is None:
+                continue
+            
+            print("\n--- Lista de Empleados ---")
             empleados = taller.listar_empleados()
             for empleado in empleados:
                 print(f"  ID: {empleado[0]} - {empleado[1]}")
             
-            try:
-                cliente_id = int(input("\nID del cliente: "))
-                vehiculos = taller.obtener_vehiculos_cliente(cliente_id)
+            # Validar todos los números
+            numero_orden = taller.pedir_numero("Número de orden: ", "entero")
+            if numero_orden is None:
+                continue
                 
-                if not vehiculos:
-                    print("❌ Este cliente no tiene vehículos registrados")
-                    continue
+            empleado_id = taller.pedir_numero("ID del empleado: ", "entero")
+            if empleado_id is None:
+                continue
                 
-                print("\n--- Vehículos del cliente ---")
-                for vehiculo in vehiculos:
-                    print(f"  ID: {vehiculo[0]} - {vehiculo[1]} {vehiculo[2]} ({vehiculo[4]})")
+            descripcion = input("Descripción del trabajo: ")
+            tipo_servicio = input("Tipo de servicio (ej: frenos, aceite, motor): ")
+            
+            horas = taller.pedir_numero("Horas trabajadas: ", "decimal")
+            if horas is None:
+                continue
                 
-                vehiculo_id = int(input("\nID del vehículo: "))
-                numero_orden = int(input("Número de orden: "))
-                empleado_id = int(input("ID del empleado: "))
-                descripcion = input("Descripción del trabajo: ")
-                tipo_servicio = input("Tipo de servicio (ej: frenos, aceite, motor): ")
-                horas = float(input("Horas trabajadas: "))
-                repuestos = float(input("Costo repuestos: $"))
-                mano_obra = float(input("Costo mano de obra: $"))
-                kilometraje = float(input("Kilometraje: "))
-                unidad = input("Unidad (km/millas) [km]: ") or "km"
+            repuestos = taller.pedir_numero("Costo repuestos: $", "decimal")
+            if repuestos is None:
+                continue
                 
-                fecha_fin_input = input("Fecha de finalización (YYYY-MM-DD) o Enter para hoy: ")
-                fecha_fin = fecha_fin_input if fecha_fin_input else None
+            mano_obra = taller.pedir_numero("Costo mano de obra: $", "decimal")
+            if mano_obra is None:
+                continue
                 
-                resultado = taller.agregar_orden(numero_orden, vehiculo_id, empleado_id, descripcion, 
-                                               tipo_servicio, horas, repuestos, mano_obra, 
-                                               kilometraje, unidad, fecha_fin)
-                print(resultado)
-            except ValueError:
-                print("❌ Error: Ingresa valores numéricos válidos")
+            kilometraje = taller.pedir_numero("Kilometraje: ", "decimal")
+            if kilometraje is None:
+                continue
+                
+            unidad = input("Unidad (km/millas) [km]: ") or "km"
+            
+            fecha_fin_input = input("Fecha de finalización (YYYY-MM-DD) o Enter para hoy: ")
+            fecha_fin = fecha_fin_input if fecha_fin_input else None
+            
+            resultado = taller.agregar_orden(numero_orden, vehiculo_id, empleado_id, descripcion, 
+                                           tipo_servicio, horas, repuestos, mano_obra, 
+                                           kilometraje, unidad, fecha_fin)
+            print(resultado)
                 
         elif opcion == "4":
             print("\n📝 AÑADIR VEHÍCULO A CLIENTE EXISTENTE")
-            try:
-                cliente_id = int(input("ID del cliente: "))
+            
+            cliente_id = taller.seleccionar_cliente_interactivo()
+            if cliente_id is None:
+                continue
+            
+            marca = input("Marca del vehículo: ")
+            modelo = input("Modelo: ")
+            
+            año = taller.pedir_numero("Año: ", "entero")
+            if año is None:
+                continue
                 
-                if not taller.cliente_existe(cliente_id):
-                    print("❌ Error: El cliente no existe")
-                    continue
+            placa = input("Placa: ")
+            if taller.placa_existe(placa):
+                print("❌ Error: Ya existe un vehículo con esa placa.")
+                continue
                 
-                marca = input("Marca del vehículo: ")
-                modelo = input("Modelo: ")
-                año = input("Año: ")
-                placa = input("Placa: ")
-                color = input("Color (opcional): ")
-                
-                resultado = taller.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color or None)
-                print(resultado)
-            except ValueError:
-                print("❌ Error: Ingresa un ID válido")
+            color = input("Color (opcional): ") or None
+            
+            resultado = taller.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color)
+            print(resultado)
         
         # 🔍 BUSCAR Y CONSULTAR
         elif opcion == "5":
-            print("\n🔍 BUSCAR CLIENTE")
-            nombre_buscar = input("Nombre del cliente a buscar: ")
-            clientes = taller.buscar_cliente(nombre_buscar)
+            print("\n🔍 BUSCAR Y VER CLIENTE")
+            cliente_id = taller.seleccionar_cliente_interactivo()
+            if cliente_id is None:
+                continue
+                
+            detalles = taller.detalles_cliente(cliente_id)
             
-            if clientes:
-                print(f"\n✅ Resultados para '{nombre_buscar}':")
-                for cliente in clientes:
-                    print(f"  🆔 ID: {cliente[0]}")
-                    print(f"  👤 Nombre: {cliente[1]}")
-                    print(f"  📞 Teléfono: {cliente[2] or 'No tiene'}")
-                    print("  " + "-" * 30)
+            if detalles:
+                cliente_info = detalles['cliente']
+                vehiculos = detalles['vehiculos']
+                
+                print(f"\n📋 DETALLES DEL CLIENTE:")
+                print(f"  👤 Nombre: {cliente_info[0]}")
+                print(f"  📞 Teléfono: {cliente_info[1] or 'No tiene'}")
+                print(f"  📅 Fecha registro: {cliente_info[2]}")
+                
+                if vehiculos:
+                    print(f"\n🚗 VEHÍCULOS ({len(vehiculos)}):")
+                    for vehiculo in vehiculos:
+                        print(f"  🆔 ID: {vehiculo[0]}")
+                        print(f"  🚙 {vehiculo[1]} {vehiculo[2]} {vehiculo[3]}")
+                        print(f"  🪪 Placa: {vehiculo[4]}")
+                        print("  " + "-" * 25)
+                else:
+                    print("\n  🚗 Este cliente no tiene vehículos registrados")
             else:
-                print("❌ No se encontraron clientes con ese nombre")
+                print("❌ Cliente no encontrado")
                 
         elif opcion == "6":
-            print("\n🔍 DETALLES DE CLIENTE")
-            try:
-                cliente_id = int(input("ID del cliente: "))
-                detalles = taller.detalles_cliente(cliente_id)
+            print("\n🔍 HISTORIAL POR VEHÍCULO")
+            
+            # Primero buscar el cliente
+            cliente_id = taller.seleccionar_cliente_interactivo()
+            if cliente_id is None:
+                continue
                 
-                if detalles:
-                    cliente_info = detalles['cliente']
-                    vehiculos = detalles['vehiculos']
-                    
-                    print(f"\n📋 DETALLES DEL CLIENTE:")
-                    print(f"  👤 Nombre: {cliente_info[0]}")
-                    print(f"  📞 Teléfono: {cliente_info[1] or 'No tiene'}")
-                    print(f"  📅 Fecha registro: {cliente_info[2]}")
-                    
-                    if vehiculos:
-                        print(f"\n🚗 VEHÍCULOS ({len(vehiculos)}):")
-                        for vehiculo in vehiculos:
-                            print(f"  🆔 ID: {vehiculo[0]}")
-                            print(f"  🚙 {vehiculo[1]} {vehiculo[2]} {vehiculo[3]}")
-                            print(f"  🪪 Placa: {vehiculo[4]}")
-                            print("  " + "-" * 25)
-                    else:
-                        print("\n  🚗 Este cliente no tiene vehículos registrados")
+            # Luego seleccionar el vehículo
+            vehiculo_id = taller.seleccionar_vehiculo_interactivo(cliente_id)
+            if vehiculo_id is None:
+                continue
+                
+            detalles = taller.detalles_vehiculo(vehiculo_id)
+            
+            if detalles:
+                vehiculo_info = detalles['vehiculo']
+                ordenes = detalles['ordenes']
+                
+                print(f"\n📋 INFORMACIÓN DEL VEHÍCULO:")
+                print(f"  🚙 Vehículo: {vehiculo_info[0]} {vehiculo_info[1]} {vehiculo_info[2]}")
+                print(f"  🪪 Placa: {vehiculo_info[3]}")
+                print(f"  🎨 Color: {vehiculo_info[4] or 'No especificado'}")
+                print(f"  👤 Cliente: {vehiculo_info[5]}")
+                print(f"  📞 Tel: {vehiculo_info[6] or 'No tiene'}")
+                
+                if ordenes:
+                    print(f"\n📊 HISTORIAL DE TRABAJOS ({len(ordenes)}):")
+                    for orden in ordenes:
+                        print(f"  🔧 Orden #{orden[0]}")
+                        print(f"     📝 {orden[4]}: {orden[3]}")
+                        print(f"     📅 {orden[1]} a {orden[2]}")
+                        print(f"     💰 ${orden[5]} - 🛣️ {orden[6]} {orden[7]}")
+                        print(f"     👷 Empleado: {orden[8]}")
+                        print("     " + "-" * 40)
                 else:
-                    print("❌ Cliente no encontrado")
-                    
-            except ValueError:
-                print("❌ Error: Ingresa un ID válido")
+                    print("\n  📝 Este vehículo no tiene trabajos registrados")
+            else:
+                print("❌ Vehículo no encontrado")
                 
         elif opcion == "7":
-            print("\n🔍 HISTORIAL POR VEHÍCULO")
-            try:
-                vehiculo_id = int(input("ID del vehículo: "))
-                detalles = taller.detalles_vehiculo(vehiculo_id)
-                
-                if detalles:
-                    vehiculo_info = detalles['vehiculo']
-                    ordenes = detalles['ordenes']
-                    
-                    print(f"\n📋 INFORMACIÓN DEL VEHÍCULO:")
-                    print(f"  🚙 Vehículo: {vehiculo_info[0]} {vehiculo_info[1]} {vehiculo_info[2]}")
-                    print(f"  🪪 Placa: {vehiculo_info[3]}")
-                    print(f"  🎨 Color: {vehiculo_info[4] or 'No especificado'}")
-                    print(f"  👤 Cliente: {vehiculo_info[5]}")
-                    print(f"  📞 Tel: {vehiculo_info[6] or 'No tiene'}")
-                    
-                    if ordenes:
-                        print(f"\n📊 HISTORIAL DE TRABAJOS ({len(ordenes)}):")
-                        for orden in ordenes:
-                            print(f"  🔧 Orden #{orden[0]}")
-                            print(f"     📝 {orden[4]}: {orden[3]}")
-                            print(f"     📅 {orden[1]} a {orden[2]}")
-                            print(f"     💰 ${orden[5]} - 🛣️ {orden[6]} {orden[7]}")
-                            print(f"     👷 Empleado: {orden[8]}")
-                            print("     " + "-" * 40)
-                    else:
-                        print("\n  📝 Este vehículo no tiene trabajos registrados")
-                else:
-                    print("❌ Vehículo no encontrado")
-                    
-            except ValueError:
-                print("❌ Error: Ingresa un ID válido")
-                
-        elif opcion == "8":
             print("\n🔍 BUSCAR ORDEN POR ID")
-            try:
-                orden_id = int(input("ID de la orden: "))
-                # Aquí podríamos agregar una función específica para buscar órdenes
-                # Por ahora usamos la validación existente
-                if taller.orden_existe(orden_id):
-                    print(f"✅ La orden #{orden_id} existe en el sistema")
-                    # Podríamos mostrar detalles básicos de la orden
-                else:
-                    print(f"❌ La orden #{orden_id} no existe")
-            except ValueError:
-                print("❌ Error: Ingresa un ID válido")
+            orden_id = taller.pedir_numero("ID de la orden: ", "entero")
+            if orden_id is None:
+                continue
+                
+            if taller.orden_existe(orden_id):
+                print(f"✅ La orden #{orden_id} existe en el sistema")
+            else:
+                print(f"❌ La orden #{orden_id} no existe")
         
         # ✏️ EDITAR Y ACTUALIZAR
-        elif opcion == "9":
+        elif opcion == "8":
             print("\n✏️ EDITAR CLIENTE")
-            try:
-                cliente_id = int(input("ID del cliente a editar: "))
-                nuevo_nombre = input("Nuevo nombre: ")
-                nuevo_telefono = input("Nuevo teléfono (opcional): ")
+            cliente_id = taller.seleccionar_cliente_interactivo()
+            if cliente_id is None:
+                continue
                 
-                resultado = taller.editar_cliente(cliente_id, nuevo_nombre, nuevo_telefono or None)
-                print(resultado)
-            except ValueError:
-                print("❌ Error: Ingresa un ID válido")
+            resultado = taller.editar_cliente_interactivo(cliente_id)
+            print(resultado)
+                
+        elif opcion == "9":
+            print("\n✏️ EDITAR EMPLEADO")
+            empleado_id = taller.pedir_numero("ID del empleado a editar: ", "entero")
+            if empleado_id is None:
+                continue
+                
+            resultado = taller.editar_empleado_interactivo(empleado_id)
+            print(resultado)
                 
         elif opcion == "10":
-            print("\n✏️ EDITAR EMPLEADO")
-            try:
-                empleado_id = int(input("ID del empleado a editar: "))
-                nuevo_nombre = input("Nuevo nombre: ")
-                nuevo_telefono = input("Nuevo teléfono (opcional): ")
-                
-                resultado = taller.editar_empleado(empleado_id, nuevo_nombre, nuevo_telefono or None)
-                print(resultado)
-            except ValueError:
-                print("❌ Error: Ingresa un ID válido")
-                
-        elif opcion == "11":
             print("\n✏️ EDITAR ORDEN")
-            try:
-                orden_id = int(input("ID de la orden a editar: "))
-                print("\n¿Qué deseas editar? (dejar en blanco para no cambiar)")
-                nueva_desc = input("Nueva descripción: ") or None
-                nuevo_precio = input("Nuevo precio total: ") or None
-                nuevo_precio = float(nuevo_precio) if nuevo_precio else None
-                nuevo_tipo = input("Nuevo tipo de servicio: ") or None
-                nuevo_km = input("Nuevo kilometraje: ") or None
-                nuevo_km = float(nuevo_km) if nuevo_km else None
+            orden_id = taller.pedir_numero("ID de la orden a editar: ", "entero")
+            if orden_id is None:
+                continue
                 
-                resultado = taller.editar_orden(orden_id, nueva_desc, nuevo_precio, nuevo_tipo, nuevo_km)
-                print(resultado)
-            except ValueError:
-                print("❌ Error: Ingresa valores válidos")
+            resultado = taller.editar_orden_interactivo(orden_id)
+            print(resultado)
         
         # 📊 REPORTES Y ANÁLISIS
-        elif opcion == "12":
+        elif opcion == "11":
             print("\n📊 REPORTES Y ANÁLISIS")
             print("  1. 📈 Reporte Semanal")
             print("  2. 📅 Reporte Mensual") 
