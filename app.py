@@ -832,9 +832,19 @@ class RecordatoriosInteligentes:
             vehiculo_actual, fecha_actual, km_actual, fecha_anterior, km_anterior = datos[i]
             
             if fecha_anterior and km_anterior:  # Solo si hay servicio anterior
+                # CORRECCIÓN: Manejar diferentes tipos de fecha
+                if isinstance(fecha_actual, str):
+                    fecha_actual_dt = datetime.strptime(fecha_actual, '%Y-%m-%d')
+                else:
+                    fecha_actual_dt = datetime.combine(fecha_actual, datetime.min.time())
+                    
+                if isinstance(fecha_anterior, str):
+                    fecha_anterior_dt = datetime.strptime(fecha_anterior, '%Y-%m-%d')
+                else:
+                    fecha_anterior_dt = datetime.combine(fecha_anterior, datetime.min.time())
+                
                 # Calcular diferencia en días
-                dias_diferencia = (datetime.strptime(fecha_actual, '%Y-%m-%d') - 
-                                 datetime.strptime(fecha_anterior, '%Y-%m-%d')).days
+                dias_diferencia = (fecha_actual_dt - fecha_anterior_dt).days
                 
                 # Calcular diferencia en kilómetros
                 km_diferencia = km_actual - km_anterior
@@ -865,7 +875,16 @@ class RecordatoriosInteligentes:
             LIMIT 1
         ''', (vehiculo_id, tipo_servicio))
         
-        return cursor.fetchone()
+        resultado = cursor.fetchone()
+        
+        # CORRECCIÓN: Asegurar que la fecha esté en formato string
+        if resultado:
+            fecha, kilometraje = resultado
+            if not isinstance(fecha, str):
+                fecha = fecha.strftime('%Y-%m-%d')  # Convertir date a string
+            return (fecha, kilometraje)
+        
+        return None
     
     def predecir_proximo_servicio(self, tipo_servicio: str, margen_dias: int = 30) -> List[Dict]:
         """Predice qué vehículos necesitarán pronto un servicio específico"""
@@ -895,7 +914,13 @@ class RecordatoriosInteligentes:
             
             if ultimo_servicio:
                 fecha_ultimo, km_ultimo = ultimo_servicio
-                fecha_ultimo_dt = datetime.strptime(fecha_ultimo, '%Y-%m-%d')
+                
+                # CORRECCIÓN: Manejar tanto strings como objetos date
+                if isinstance(fecha_ultimo, str):
+                    fecha_ultimo_dt = datetime.strptime(fecha_ultimo, '%Y-%m-%d')
+                else:
+                    # Si ya es un objeto date, convertirlo a datetime
+                    fecha_ultimo_dt = datetime.combine(fecha_ultimo, datetime.min.time())
                 
                 # Calcular fecha estimada del próximo servicio
                 fecha_estimada = fecha_ultimo_dt + timedelta(days=estadisticas['dias_promedio'])
@@ -912,7 +937,7 @@ class RecordatoriosInteligentes:
                         'placa': placa,
                         'cliente': cliente,
                         'telefono': telefono,
-                        'ultimo_servicio': fecha_ultimo,
+                        'ultimo_servicio': fecha_ultimo if isinstance(fecha_ultimo, str) else fecha_ultimo.strftime('%Y-%m-%d'),
                         'km_ultimo': km_ultimo,
                         'proximo_estimado': fecha_estimada.strftime('%Y-%m-%d'),
                         'km_estimado': km_estimado,
