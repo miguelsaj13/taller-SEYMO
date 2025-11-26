@@ -793,25 +793,169 @@ class ReportManager:
         print(f"✅ Gráfica guardada: {archivo_path}")
 
 class RecordatoriosInteligentes:
-    """Sistema inteligente que predice mantenimiento basado en historial"""
+    """Sistema inteligente que predice mantenimiento basado en historial de servicios"""
     
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
     
-    def obtener_recordatorios_mantenimiento(self, dias: int = 30) -> List[Tuple]:
-        """Obtiene vehículos con mantenimiento próximo"""
-        fecha_limite = datetime.now() + timedelta(days=dias)
-        
+    def obtener_tipos_servicio_disponibles(self) -> List[str]:
+        """Obtiene todos los tipos de servicio únicos de la base de datos"""
         cursor = self.db.execute_query('''
-            SELECT v.placa, v.marca, v.modelo, v.proximo_mantenimiento, c.nombre, c.telefono
+            SELECT DISTINCT tipo_servicio FROM ordenes_trabajo 
+            WHERE tipo_servicio IS NOT NULL AND tipo_servicio != ''
+            ORDER BY tipo_servicio
+        ''')
+        return [servicio[0] for servicio in cursor.fetchall()]
+    
+    def calcular_promedio_entre_servicios(self, tipo_servicio: str) -> Dict:
+        """Calcula el promedio de tiempo entre servicios para un tipo específico"""
+        cursor = self.db.execute_query('''
+            SELECT o.vehiculo_id, o.fecha_fin, o.kilometraje,
+                   LAG(o.fecha_fin) OVER (PARTITION BY o.vehiculo_id ORDER BY o.fecha_fin) as fecha_anterior,
+                   LAG(o.kilometraje) OVER (PARTITION BY o.vehiculo_id ORDER BY o.fecha_fin) as km_anterior
+            FROM ordenes_trabajo o
+            WHERE o.tipo_servicio = ?
+            ORDER BY o.vehiculo_id, o.fecha_fin
+        ''', (tipo_servicio,))
+        
+        datos = cursor.fetchall()
+        
+        if not datos:
+            return {'dias_promedio': 0, 'km_promedio': 0, 'total_vehiculos': 0, 'total_servicios': 0}
+        
+        diferencias_dias = []
+        diferencias_km = []
+        vehiculos_analizados = set()
+        total_servicios = 0
+        
+        for i in range(1, len(datos)):
+            vehiculo_actual, fecha_actual, km_actual, fecha_anterior, km_anterior = datos[i]
+            
+            if fecha_anterior and km_anterior:  # Solo si hay servicio anterior
+                # Calcular diferencia en días
+                dias_diferencia = (datetime.strptime(fecha_actual, '%Y-%m-%d') - 
+                                 datetime.strptime(fecha_anterior, '%Y-%m-%d')).days
+                
+                # Calcular diferencia en kilómetros
+                km_diferencia = km_actual - km_anterior
+                
+                if dias_diferencia > 0 and km_diferencia > 0:
+                    diferencias_dias.append(dias_diferencia)
+                    diferencias_km.append(km_diferencia)
+                    vehiculos_analizados.add(vehiculo_actual)
+                    total_servicios += 1
+        
+        if diferencias_dias:
+            return {
+                'dias_promedio': sum(diferencias_dias) / len(diferencias_dias),
+                'km_promedio': sum(diferencias_km) / len(diferencias_km),
+                'total_vehiculos': len(vehiculos_analizados),
+                'total_servicios': total_servicios
+            }
+        else:
+            return {'dias_promedio': 0, 'km_promedio': 0, 'total_vehiculos': 0, 'total_servicios': 0}
+    
+    def obtener_ultimo_servicio_vehiculo(self, vehiculo_id: int, tipo_servicio: str) -> Optional[Tuple]:
+        """Obtiene el último servicio de un tipo específico para un vehículo"""
+        cursor = self.db.execute_query('''
+            SELECT fecha_fin, kilometraje 
+            FROM ordenes_trabajo 
+            WHERE vehiculo_id = ? AND tipo_servicio = ?
+            ORDER BY fecha_fin DESC 
+            LIMIT 1
+        ''', (vehiculo_id, tipo_servicio))
+        
+        return cursor.fetchone()
+    
+    def predecir_proximo_servicio(self, tipo_servicio: str, margen_dias: int = 30) -> List[Dict]:
+        """Predice qué vehículos necesitarán pronto un servicio específico"""
+        # Obtener estadísticas del servicio
+        estadisticas = self.calcular_promedio_entre_servicios(tipo_servicio)
+        
+        if estadisticas['total_servicios'] == 0:
+            return []
+        
+        # Obtener todos los vehículos que han tenido este servicio
+        cursor = self.db.execute_query('''
+            SELECT DISTINCT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono
+            FROM vehiculos v
+            JOIN ordenes_trabajo o ON v.id = o.vehiculo_id
+            JOIN clientes c ON v.cliente_id = c.id
+            WHERE o.tipo_servicio = ?
+        ''', (tipo_servicio,))
+        
+        vehiculos = cursor.fetchall()
+        resultados = []
+        
+        for vehiculo in vehiculos:
+            vehiculo_id, marca, modelo, placa, cliente, telefono = vehiculo
+            
+            # Obtener último servicio de este tipo
+            ultimo_servicio = self.obtener_ultimo_servicio_vehiculo(vehiculo_id, tipo_servicio)
+            
+            if ultimo_servicio:
+                fecha_ultimo, km_ultimo = ultimo_servicio
+                fecha_ultimo_dt = datetime.strptime(fecha_ultimo, '%Y-%m-%d')
+                
+                # Calcular fecha estimada del próximo servicio
+                fecha_estimada = fecha_ultimo_dt + timedelta(days=estadisticas['dias_promedio'])
+                km_estimado = km_ultimo + estadisticas['km_promedio']
+                
+                # Verificar si está próximo (dentro del margen de días)
+                dias_restantes = (fecha_estimada - datetime.now()).days
+                
+                if dias_restantes <= margen_dias and dias_restantes >= 0:
+                    resultados.append({
+                        'vehiculo_id': vehiculo_id,
+                        'marca': marca,
+                        'modelo': modelo,
+                        'placa': placa,
+                        'cliente': cliente,
+                        'telefono': telefono,
+                        'ultimo_servicio': fecha_ultimo,
+                        'km_ultimo': km_ultimo,
+                        'proximo_estimado': fecha_estimada.strftime('%Y-%m-%d'),
+                        'km_estimado': km_estimado,
+                        'dias_restantes': dias_restantes,
+                        'dias_promedio_historico': estadisticas['dias_promedio'],
+                        'km_promedio_historico': estadisticas['km_promedio']
+                    })
+        
+        # Ordenar por proximidad
+        resultados.sort(key=lambda x: x['dias_restantes'])
+        return resultados
+    
+    def obtener_vehiculos_sin_servicio(self, tipo_servicio: str) -> List[Tuple]:
+        """Obtiene vehículos que nunca han tenido este tipo de servicio"""
+        cursor = self.db.execute_query('''
+            SELECT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono
             FROM vehiculos v
             JOIN clientes c ON v.cliente_id = c.id
-            WHERE v.proximo_mantenimiento IS NOT NULL 
-            AND v.proximo_mantenimiento <= ?
-            ORDER BY v.proximo_mantenimiento ASC
-        ''', (fecha_limite.date(),))
+            WHERE v.id NOT IN (
+                SELECT DISTINCT vehiculo_id 
+                FROM ordenes_trabajo 
+                WHERE tipo_servicio = ?
+            )
+        ''', (tipo_servicio,))
         
         return cursor.fetchall()
+    
+    def analizar_patrones_todos_servicios(self) -> Dict:
+        """Analiza patrones para todos los tipos de servicio disponibles"""
+        tipos_servicio = self.obtener_tipos_servicio_disponibles()
+        resultados = {}
+        
+        for tipo_servicio in tipos_servicio:
+            estadisticas = self.calcular_promedio_entre_servicios(tipo_servicio)
+            predicciones = self.predecir_proximo_servicio(tipo_servicio, 60)  # 60 días de margen
+            
+            resultados[tipo_servicio] = {
+                'estadisticas': estadisticas,
+                'predicciones': predicciones,
+                'total_predicciones': len(predicciones)
+            }
+        
+        return resultados
 
 class TallerSEYMO:
     """Clase principal que coordina todas las funcionalidades del taller"""
@@ -1012,6 +1156,189 @@ class TallerSEYMO:
                 return None
         return None
 
+    def menu_recordatorios_inteligentes(self):
+        """Menú interactivo para recordatorios inteligentes predictivos"""
+        while True:
+            print(f"\n{'='*60}")
+            print("🧠 SISTEMA INTELIGENTE DE RECORDATORIOS PREDICTIVOS")
+            print("="*60)
+            
+            # Obtener tipos de servicio disponibles
+            tipos_servicio = self.recordatorios.obtener_tipos_servicio_disponibles()
+            
+            if not tipos_servicio:
+                print("❌ No hay tipos de servicio registrados en el sistema.")
+                print("   Agregue algunas órdenes de trabajo primero.")
+                return
+            
+            print("🔧 TIPOS DE SERVICIO DISPONIBLES:")
+            for i, servicio in enumerate(tipos_servicio, 1):
+                print(f"   {i}. {servicio}")
+            
+            print(f"   0. ↩️ Volver al menú principal")
+            print("="*60)
+            
+            try:
+                seleccion = input("\nSelecciona el tipo de mantenimiento a analizar: ")
+                
+                if seleccion == "0":
+                    return
+                
+                idx = int(seleccion) - 1
+                if 0 <= idx < len(tipos_servicio):
+                    tipo_servicio_seleccionado = tipos_servicio[idx]
+                    self.analizar_recordatorios_servicio(tipo_servicio_seleccionado)
+                else:
+                    print("❌ Selección inválida.")
+                    
+            except ValueError:
+                print("❌ Por favor ingresa un número válido.")
+
+    def analizar_recordatorios_servicio(self, tipo_servicio: str):
+        """Analiza y muestra recordatorios para un tipo de servicio específico"""
+        print(f"\n📊 ANALIZANDO: {tipo_servicio}")
+        print("⏳ Calculando patrones de mantenimiento...")
+        
+        # Obtener estadísticas del servicio
+        estadisticas = self.recordatorios.calcular_promedio_entre_servicios(tipo_servicio)
+        
+        print(f"\n📈 ESTADÍSTICAS DEL SISTEMA PARA '{tipo_servicio}':")
+        print(f"   📅 Promedio de días entre servicios: {estadisticas['dias_promedio']:.0f} días")
+        print(f"   🛣️  Promedio de km entre servicios: {estadisticas['km_promedio']:.0f} km")
+        print(f"   🚗 Vehículos analizados: {estadisticas['total_vehiculos']}")
+        print(f"   🔧 Servicios analizados: {estadisticas['total_servicios']}")
+        
+        if estadisticas['total_servicios'] == 0:
+            print("\n❌ No hay suficientes datos históricos para hacer predicciones.")
+            return
+        
+        # Obtener predicciones
+        margen_dias = self.pedir_numero_con_reintentos("\n🔍 ¿En cuántos días quieres buscar recordatorios? (ej: 30): ", "entero")
+        if margen_dias is None:
+            margen_dias = 30
+        
+        print(f"\n🔔 BUSCANDO VEHÍCULOS QUE NECESITARÁN SERVICIO EN PRÓXIMOS {margen_dias} DÍAS...")
+        
+        recordatorios = self.recordatorios.predecir_proximo_servicio(tipo_servicio, margen_dias)
+        
+        if recordatorios:
+            print(f"\n🚗 VEHÍCULOS PRÓXIMOS A '{tipo_servicio}' ({len(recordatorios)}):")
+            for i, recordatorio in enumerate(recordatorios, 1):
+                print(f"\n   {i}. {recordatorio['marca']} {recordatorio['modelo']} - {recordatorio['placa']}")
+                print(f"      👤 Cliente: {recordatorio['cliente']} - 📞 {recordatorio['telefono'] or 'No tiene'}")
+                print(f"      📅 Último servicio: {recordatorio['ultimo_servicio']} ({recordatorio['km_ultimo']} km)")
+                print(f"      🎯 Próximo estimado: {recordatorio['proximo_estimado']} ({recordatorio['km_estimado']:.0f} km)")
+                print(f"      ⏰ Días restantes: {recordatorio['dias_restantes']} días")
+                print(f"      📊 Basado en: {recordatorio['dias_promedio_historico']:.0f} días / {recordatorio['km_promedio_historico']:.0f} km promedio")
+                print("      " + "-" * 50)
+        else:
+            print(f"\n✅ No hay vehículos que necesiten '{tipo_servicio}' en los próximos {margen_dias} días")
+        
+        # Mostrar vehículos sin historial de este servicio
+        vehiculos_sin_servicio = self.recordatorios.obtener_vehiculos_sin_servicio(tipo_servicio)
+        if vehiculos_sin_servicio:
+            print(f"\n🚙 VEHÍCULOS SIN HISTORIAL DE '{tipo_servicio}' ({len(vehiculos_sin_servicio)}):")
+            print("   (Podrían necesitar su primer servicio de este tipo)")
+            for vehiculo in vehiculos_sin_servicio[:5]:  # Mostrar solo primeros 5
+                print(f"   • {vehiculo[1]} {vehiculo[2]} - {vehiculo[3]} - {vehiculo[4]}")
+            
+            if len(vehiculos_sin_servicio) > 5:
+                print(f"   ... y {len(vehiculos_sin_servicio) - 5} más")
+
+    def analizar_todos_los_servicios(self):
+        """Analiza todos los tipos de servicio disponibles"""
+        print(f"\n{'='*60}")
+        print("📊 ANÁLISIS COMPLETO DE TODOS LOS SERVICIOS")
+        print("="*60)
+        
+        resultados = self.recordatorios.analizar_patrones_todos_servicios()
+        
+        if not resultados:
+            print("❌ No hay datos suficientes para realizar el análisis.")
+            return
+        
+        total_predicciones = 0
+        for tipo_servicio, datos in resultados.items():
+            estadisticas = datos['estadisticas']
+            predicciones = datos['predicciones']
+            
+            print(f"\n🔧 {tipo_servicio.upper()}:")
+            print(f"   📊 {estadisticas['total_servicios']} servicios analizados")
+            print(f"   🚗 {estadisticas['total_vehiculos']} vehículos en historial")
+            print(f"   ⏱️  Promedio: {estadisticas['dias_promedio']:.0f} días / {estadisticas['km_promedio']:.0f} km")
+            print(f"   🔔 {len(predicciones)} vehículos necesitarán servicio pronto")
+            
+            total_predicciones += len(predicciones)
+        
+        print(f"\n📈 RESUMEN GENERAL:")
+        print(f"   🔧 Tipos de servicio analizados: {len(resultados)}")
+        print(f"   🚗 Total de predicciones activas: {total_predicciones}")
+        print(f"   💡 Recomendación: {'Contacta clientes proactivamente' if total_predicciones > 0 else 'Mantenimiento preventivo al día'}")
+
+    def generar_reporte_proactivo(self):
+        """Genera un reporte proactivo para contactar clientes"""
+        print(f"\n{'='*60}")
+        print("📞 REPORTE PROACTIVO PARA CONTACTO DE CLIENTES")
+        print("="*60)
+        
+        tipos_servicio = self.recordatorios.obtener_tipos_servicio_disponibles()
+        clientes_a_contactar = []
+        
+        for tipo_servicio in tipos_servicio:
+            # Buscar vehículos que necesitarán servicio en los próximos 15 días
+            recordatorios = self.recordatorios.predecir_proximo_servicio(tipo_servicio, 15)
+            
+            for recordatorio in recordatorios:
+                clientes_a_contactar.append({
+                    'tipo_servicio': tipo_servicio,
+                    'cliente': recordatorio['cliente'],
+                    'telefono': recordatorio['telefono'],
+                    'vehiculo': f"{recordatorio['marca']} {recordatorio['modelo']}",
+                    'placa': recordatorio['placa'],
+                    'proximo_servicio': recordatorio['proximo_estimado'],
+                    'dias_restantes': recordatorio['dias_restantes']
+                })
+        
+        # Ordenar por días restantes
+        clientes_a_contactar.sort(key=lambda x: x['dias_restantes'])
+        
+        if clientes_a_contactar:
+            print(f"\n📞 CLIENTES A CONTACTAR ({len(clientes_a_contactar)}):")
+            for i, cliente in enumerate(clientes_a_contactar, 1):
+                print(f"\n   {i}. {cliente['cliente']}")
+                print(f"      📞 Teléfono: {cliente['telefono'] or 'No tiene'}")
+                print(f"      🚗 Vehículo: {cliente['vehiculo']} - {cliente['placa']}")
+                print(f"      🔧 Servicio: {cliente['tipo_servicio']}")
+                print(f"      📅 Próximo servicio: {cliente['proximo_servicio']}")
+                print(f"      ⏰ Urgencia: {cliente['dias_restantes']} días restantes")
+                print("      " + "-" * 40)
+            
+            print(f"\n💡 ACCIONES RECOMENDADAS:")
+            print("   • Contacta a los clientes con menos de 7 días restantes primero")
+            print("   • Ofrece descuentos por reserva anticipada")
+            print("   • Programa citas con al menos 3 días de anticipación")
+        else:
+            print("\n✅ No hay clientes que necesiten contacto inmediato")
+            print("💡 Todos los mantenimientos están bajo control")
+
+def mostrar_reporte(reporte: Dict, taller):
+    """Muestra un reporte formateado"""
+    print(f"\n📊 REPORTE {reporte['periodo'].upper()}")
+    print(f"   📅 Período: {reporte['fecha_inicio']} al {datetime.now().date()}")
+    print(f"   💰 Ganancias totales: ${reporte['ganancias']:.2f}")
+    print(f"   ⏱️  Horas trabajadas: {reporte['horas_trabajadas']:.1f}")
+    print(f"   🔧 Trabajos completados: {reporte['trabajos_completados']}")
+    
+    if reporte['servicios_populares']:
+        print(f"\n   🏆 SERVICIOS MÁS POPULARES:")
+        for servicio, cantidad, total in reporte['servicios_populares']:
+            print(f"      • {servicio}: {cantidad} trabajos (${total:.2f})")
+    
+    # Generar gráfica si hay datos
+    if reporte['servicios_populares'] and input("\n¿Generar gráfica? (s/n): ").lower() == 's':
+        nombre_archivo = f"servicios_populares_{reporte['periodo']}_{datetime.now().strftime('%Y%m%d')}"
+        taller.reportes.crear_grafica_servicios_populares(reporte, nombre_archivo)
+
 # INTERFAZ PRINCIPAL COMPLETA
 def menu_principal():
     """Función principal con todas las opciones implementadas"""
@@ -1047,625 +1374,386 @@ def menu_principal():
             print("  11. Ver Reportes Avanzados")
             
             print("\n🧠 MANTENIMIENTO INTELIGENTE")
-            print("  12. Recordatorios Inteligentes")
+            print("  12. Recordatorios Inteligentes Predictivos")
+            print("  13. Análisis Completo de Servicios")
+            print("  14. Reporte Proactivo para Clientes")
             
             print("\n  0. Salir del Sistema")
             print("="*50)
             
             opcion = input("\nSelecciona una opción: ").strip()
             
+            # OPCIONES 1-11 (FALTANTES)
             if opcion == "1":
-                # Opción 1: Nuevo Cliente + Vehículos (ya implementada)
-                print("\n📝 REGISTRAR NUEVO CLIENTE Y VEHÍCULOS")
+                # Opción 1: Nuevo Cliente + Vehículos
+                print("\n👤 REGISTRAR NUEVO CLIENTE Y VEHÍCULOS")
                 nombre = input("Nombre del cliente: ").strip()
                 if not nombre:
-                    print("❌ Error: El nombre del cliente es obligatorio.")
+                    print("❌ El nombre del cliente es obligatorio.")
                     continue
                 
-                telefono = taller.pedir_telefono_con_reintentos("Teléfono (opcional, Enter para omitir): ")
-                if telefono is None and telefono != "":
+                telefono = taller.pedir_telefono_con_reintentos("Teléfono del cliente (opcional): ", obligatorio=False)
+                if telefono is None and input("¿Continuar sin teléfono? (s/n): ").lower() != 's':
                     continue
                 
+                # Agregar cliente
                 cliente_id = taller.clientes.agregar_cliente(nombre, telefono)
                 if cliente_id is None:
                     continue
-                    
-                print(f"✅ Cliente '{nombre}' agregado (ID: {cliente_id})")
-                
-                cantidad_vehiculos = taller.pedir_numero_con_reintentos("\n¿Cuántos vehículos deseas agregar? ", "entero")
-                if cantidad_vehiculos is None:
-                    continue
-                    
-                if cantidad_vehiculos <= 0:
-                    print("❌ Cantidad inválida. Se agregará 1 vehículo por defecto.")
-                    cantidad_vehiculos = 1
                 
                 # Agregar vehículos
-                vehiculos_agregados = 0
-                for i in range(cantidad_vehiculos):
-                    print(f"\n--- Vehículo {i + 1} de {cantidad_vehiculos} ---")
+                while True:
+                    print(f"\n🚗 AGREGAR VEHÍCULO PARA {nombre}")
                     marca = input("Marca del vehículo: ").strip()
-                    if not marca:
-                        print("❌ Error: La marca es obligatoria. Saltando este vehículo.")
-                        continue
-                        
-                    modelo = input("Modelo: ").strip()
-                    if not modelo:
-                        print("❌ Error: El modelo es obligatorio. Saltando este vehículo.")
+                    modelo = input("Modelo del vehículo: ").strip()
+                    
+                    año = taller.pedir_numero_con_reintentos("Año del vehículo: ", "entero")
+                    if año is None:
                         continue
                     
-                    año = None
-                    while año is None:
-                        año_input = input("Año del vehículo: ")
-                        año = taller.validator.validar_numero(año_input, "entero")
-                        if año is None:
-                            print("❌ Error: El año debe ser un número entero.")
-                            continue
-                        año_actual = datetime.now().year
-                        if año < 1900 or año > año_actual + 2:
-                            print(f"❌ Error: El año debe estar entre 1900 y {año_actual + 2}.")
-                            año = None
-                            continue
-                            
-                    placa = input("Placa: ").strip()
+                    if not taller.validator.validar_año_vehiculo(año):
+                        print("❌ Año del vehículo inválido.")
+                        continue
+                    
+                    placa = input("Placa del vehículo: ").strip().upper()
                     if not placa:
-                        print("❌ Error: La placa es obligatoria. Saltando este vehículo.")
+                        print("❌ La placa es obligatoria.")
                         continue
-                        
+                    
                     if taller.vehiculos.placa_existe(placa):
-                        print("❌ Error: Ya existe un vehículo con esa placa. Saltando este vehículo.")
+                        print("❌ Ya existe un vehículo con esa placa.")
                         continue
-                        
-                    color = input("Color (opcional): ").strip() or None
+                    
+                    color = input("Color del vehículo (opcional): ").strip()
                     
                     resultado = taller.vehiculos.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color)
-                    if "✅" in resultado:
-                        vehiculos_agregados += 1
                     print(resultado)
-                
-                print(f"✅ Se agregaron {vehiculos_agregados} de {cantidad_vehiculos} vehículos al cliente")
-                
+                    
+                    if input("\n¿Agregar otro vehículo? (s/n): ").lower() != 's':
+                        break
+
             elif opcion == "2":
-                # Opción 2: Nuevo Empleado (ya implementada)
-                print("\n📝 REGISTRAR NUEVO EMPLEADO")
+                # Opción 2: Nuevo Empleado
+                print("\n👷 REGISTRAR NUEVO EMPLEADO")
                 nombre = input("Nombre del empleado: ").strip()
                 if not nombre:
-                    print("❌ Error: El nombre del empleado es obligatorio.")
+                    print("❌ El nombre del empleado es obligatorio.")
                     continue
-                    
-                telefono = taller.pedir_telefono_con_reintentos("Teléfono (obligatorio): ", obligatorio=True)
+                
+                telefono = taller.pedir_telefono_con_reintentos("Teléfono del empleado: ", obligatorio=True)
                 if telefono is None:
                     continue
-                    
+                
                 resultado = taller.empleados.agregar_empleado(nombre, telefono)
                 print(resultado)
-                
+
             elif opcion == "3":
-                # Opción 3: Nueva Orden de Trabajo (ya implementada)
-                print("\n📝 CREAR NUEVA ORDEN DE TRABAJO")
+                # Opción 3: Nueva Orden de Trabajo
+                print("\n📋 NUEVA ORDEN DE TRABAJO")
                 
+                # Seleccionar cliente
                 cliente_id = taller.seleccionar_cliente_interactivo()
                 if cliente_id is None:
                     continue
-                    
+                
+                # Seleccionar vehículo
                 vehiculo_id = taller.seleccionar_vehiculo_interactivo(cliente_id)
                 if vehiculo_id is None:
                     continue
                 
+                # Seleccionar empleado
                 empleado_id = taller.pedir_empleado_id_con_reintentos()
                 if empleado_id is None:
                     continue
                 
+                # Datos de la orden
                 numero_orden = taller.pedir_numero_con_reintentos("Número de orden: ", "entero")
                 if numero_orden is None:
                     continue
-                    
+                
                 descripcion = input("Descripción del trabajo: ").strip()
                 if not descripcion:
-                    print("❌ Error: La descripción del trabajo es obligatoria.")
+                    print("❌ La descripción es obligatoria.")
                     continue
-                    
-                tipo_servicio = input("Tipo de servicio (ej: frenos, aceite, motor): ").strip()
+                
+                tipo_servicio = input("Tipo de servicio: ").strip()
                 if not tipo_servicio:
-                    print("❌ Error: El tipo de servicio es obligatorio.")
+                    print("❌ El tipo de servicio es obligatorio.")
                     continue
                 
                 horas = taller.pedir_numero_con_reintentos("Horas trabajadas: ", "decimal")
                 if horas is None:
                     continue
-                    
-                repuestos = taller.pedir_numero_con_reintentos("Costo repuestos: $", "decimal")
-                if repuestos is None:
+                
+                costo_repuestos = taller.pedir_numero_con_reintentos("Costo de repuestos ($): ", "decimal")
+                if costo_repuestos is None:
                     continue
-                    
-                mano_obra = taller.pedir_numero_con_reintentos("Costo mano de obra: $", "decimal")
-                if mano_obra is None:
+                
+                costo_mano_obra = taller.pedir_numero_con_reintentos("Costo de mano de obra ($): ", "decimal")
+                if costo_mano_obra is None:
                     continue
-                    
-                kilometraje = taller.pedir_numero_con_reintentos("Kilometraje: ", "decimal")
+                
+                kilometraje = taller.pedir_numero_con_reintentos("Kilometraje del vehículo: ", "decimal")
                 if kilometraje is None:
                     continue
-                    
-                unidad = input("Unidad (km/millas) [km]: ").strip() or "km"
-                if unidad not in ['km', 'millas']:
-                    print("❌ Error: Unidad inválida. Usando 'km' por defecto.")
-                    unidad = "km"
                 
-                fecha_fin = None
-                fecha_fin_input = input("Fecha de finalización (YYYY-MM-DD) o Enter para hoy: ").strip()
-                if fecha_fin_input:
-                    fecha_fin_validada = taller.validator.validar_fecha(fecha_fin_input, permitir_futuro=True, permitir_pasado=True)
-                    if fecha_fin_validada is None:
-                        print("❌ Fecha inválida. Usando fecha de hoy.")
-                        fecha_fin = None
-                    else:
-                        fecha_fin = fecha_fin_validada.strftime('%Y-%m-%d')
+                unidad_km = input("Unidad de kilometraje (km/millas) [km]: ").strip() or "km"
                 
-                resultado = taller.ordenes.agregar_orden(numero_orden, vehiculo_id, empleado_id, descripcion, 
-                                               tipo_servicio, horas, repuestos, mano_obra, 
-                                               kilometraje, unidad, fecha_fin)
+                fecha_fin = input("Fecha de finalización (YYYY-MM-DD o Enter para hoy): ").strip()
+                
+                resultado = taller.ordenes.agregar_orden(
+                    numero_orden, vehiculo_id, empleado_id, descripcion, tipo_servicio,
+                    horas, costo_repuestos, costo_mano_obra, kilometraje, unidad_km, fecha_fin
+                )
                 print(resultado)
-                    
+
             elif opcion == "4":
-                # Opción 4: Añadir Vehículo a Cliente Existente (ya implementada)
-                print("\n📝 AÑADIR VEHÍCULO A CLIENTE EXISTENTE")
+                # Opción 4: Añadir Vehículo a Cliente Existente
+                print("\n🚗 AÑADIR VEHÍCULO A CLIENTE EXISTENTE")
                 
                 cliente_id = taller.seleccionar_cliente_interactivo()
                 if cliente_id is None:
                     continue
                 
                 marca = input("Marca del vehículo: ").strip()
-                if not marca:
-                    print("❌ Error: La marca es obligatoria.")
-                    continue
-                    
-                modelo = input("Modelo: ").strip()
-                if not modelo:
-                    print("❌ Error: El modelo es obligatorio.")
+                modelo = input("Modelo del vehículo: ").strip()
+                
+                año = taller.pedir_numero_con_reintentos("Año del vehículo: ", "entero")
+                if año is None:
                     continue
                 
-                año = None
-                while año is None:
-                    año_input = input("Año del vehículo: ")
-                    año = taller.validator.validar_numero(año_input, "entero")
-                    if año is None:
-                        print("❌ Error: El año debe ser un número entero.")
-                        continue
-                    año_actual = datetime.now().year
-                    if año < 1900 or año > año_actual + 2:
-                        print(f"❌ Error: El año debe estar entre 1900 y {año_actual + 2}.")
-                        año = None
-                        continue
+                if not taller.validator.validar_año_vehiculo(año):
+                    print("❌ Año del vehículo inválido.")
+                    continue
                 
-                placa = input("Placa: ").strip()
+                placa = input("Placa del vehículo: ").strip().upper()
                 if not placa:
-                    print("❌ Error: La placa es obligatoria.")
+                    print("❌ La placa es obligatoria.")
                     continue
-                    
+                
                 if taller.vehiculos.placa_existe(placa):
-                    print("❌ Error: Ya existe un vehículo con esa placa.")
+                    print("❌ Ya existe un vehículo con esa placa.")
                     continue
-                    
-                color = input("Color (opcional): ").strip() or None
+                
+                color = input("Color del vehículo (opcional): ").strip()
                 
                 resultado = taller.vehiculos.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color)
                 print(resultado)
-            
+
             elif opcion == "5":
-                # Opción 5: Buscar y Ver Cliente (ya implementada)
+                # Opción 5: Buscar y Ver Cliente
                 print("\n🔍 BUSCAR Y VER CLIENTE")
                 cliente_id = taller.seleccionar_cliente_interactivo()
                 if cliente_id is None:
                     continue
-                    
-                detalles = taller.clientes.detalles_cliente(cliente_id)
                 
+                detalles = taller.clientes.detalles_cliente(cliente_id)
                 if detalles:
-                    cliente_info = detalles['cliente']
-                    vehiculos = detalles['vehiculos']
-                    
+                    cliente_info, vehiculos = detalles['cliente'], detalles['vehiculos']
                     print(f"\n📋 DETALLES DEL CLIENTE:")
-                    print(f"  👤 Nombre: {cliente_info[0]}")
-                    print(f"  📞 Teléfono: {cliente_info[1] or 'No tiene'}")
-                    print(f"  📅 Fecha registro: {cliente_info[2]}")
+                    print(f"   👤 Nombre: {cliente_info[0]}")
+                    print(f"   📞 Teléfono: {cliente_info[1] or 'No tiene'}")
+                    print(f"   📅 Fecha registro: {cliente_info[2]}")
                     
                     if vehiculos:
                         print(f"\n🚗 VEHÍCULOS ({len(vehiculos)}):")
-                        for vehiculo in vehiculos:
-                            print(f"  🆔 ID: {vehiculo[0]}")
-                            print(f"  🚙 {vehiculo[1]} {vehiculo[2]} {vehiculo[3]}")
-                            print(f"  🪪 Placa: {vehiculo[4]}")
-                            print("  " + "-" * 25)
+                        for i, vehiculo in enumerate(vehiculos, 1):
+                            print(f"   {i}. {vehiculo[1]} {vehiculo[2]} {vehiculo[3]} - Placa: {vehiculo[4]} - Color: {vehiculo[5] or 'No especificado'}")
                     else:
-                        print("\n  🚗 Este cliente no tiene vehículos registrados")
+                        print("\n❌ Este cliente no tiene vehículos registrados.")
                 else:
-                    print("❌ Cliente no encontrado")
-                    
+                    print("❌ No se pudieron obtener los detalles del cliente.")
+
             elif opcion == "6":
-                # Opción 6: Ver Historial por Vehículo (ya implementada)
-                print("\n🔍 HISTORIAL POR VEHÍCULO")
-                
+                # Opción 6: Ver Historial por Vehículo
+                print("\n🚗 VER HISTORIAL POR VEHÍCULO")
                 cliente_id = taller.seleccionar_cliente_interactivo()
                 if cliente_id is None:
                     continue
-                    
+                
                 vehiculo_id = taller.seleccionar_vehiculo_interactivo(cliente_id)
                 if vehiculo_id is None:
                     continue
-                    
-                detalles = taller.vehiculos.detalles_vehiculo(vehiculo_id)
                 
+                detalles = taller.vehiculos.detalles_vehiculo(vehiculo_id)
                 if detalles:
-                    vehiculo_info = detalles['vehiculo']
-                    ordenes = detalles['ordenes']
-                    
-                    print(f"\n📋 INFORMACIÓN DEL VEHÍCULO:")
-                    print(f"  🚙 Vehículo: {vehiculo_info[0]} {vehiculo_info[1]} {vehiculo_info[2]}")
-                    print(f"  🪪 Placa: {vehiculo_info[3]}")
-                    print(f"  🎨 Color: {vehiculo_info[4] or 'No especificado'}")
-                    print(f"  👤 Cliente: {vehiculo_info[5]}")
-                    print(f"  📞 Tel: {vehiculo_info[6] or 'No tiene'}")
+                    vehiculo_info, ordenes = detalles['vehiculo'], detalles['ordenes']
+                    print(f"\n📋 DETALLES DEL VEHÍCULO:")
+                    print(f"   🚗 Vehículo: {vehiculo_info[0]} {vehiculo_info[1]} {vehiculo_info[2]}")
+                    print(f"   🏷️  Placa: {vehiculo_info[3]}")
+                    print(f"   🎨 Color: {vehiculo_info[4] or 'No especificado'}")
+                    print(f"   👤 Cliente: {vehiculo_info[5]} - 📞 {vehiculo_info[6] or 'No tiene'}")
                     
                     if ordenes:
-                        print(f"\n📊 HISTORIAL DE TRABAJOS ({len(ordenes)}):")
+                        print(f"\n🔧 HISTORIAL DE ÓRDENES ({len(ordenes)}):")
                         for orden in ordenes:
-                            print(f"  🔧 Orden #{orden[0]}")
-                            print(f"     📝 {orden[4]}: {orden[3]}")
-                            print(f"     📅 {orden[1]} a {orden[2]}")
-                            print(f"     💰 ${orden[5]} - 🛣️ {orden[6]} {orden[7]}")
-                            print(f"     👷 Empleado: {orden[8]}")
-                            print("     " + "-" * 40)
+                            print(f"\n   📋 Orden #{orden[0]}")
+                            print(f"      📅 Fecha: {orden[1]} a {orden[2] or 'En progreso'}")
+                            print(f"      🔧 Servicio: {orden[4]}")
+                            print(f"      💰 Precio: ${orden[5]:.2f}")
+                            print(f"      🛣️  Kilometraje: {orden[6]} {orden[7]}")
+                            print(f"      👷 Empleado: {orden[8] or 'No asignado'}")
+                            print(f"      📝 Descripción: {orden[3]}")
+                            print("      " + "-" * 40)
                     else:
-                        print("\n  📝 Este vehículo no tiene trabajos registrados")
+                        print("\n❌ Este vehículo no tiene órdenes de trabajo.")
                 else:
-                    print("❌ Vehículo no encontrado")
-                    
+                    print("❌ No se pudieron obtener los detalles del vehículo.")
+
             elif opcion == "7":
-                # Opción 7: Buscar Orden por ID (ya implementada)
+                # Opción 7: Buscar Orden por ID
                 print("\n🔍 BUSCAR ORDEN POR ID")
                 orden_id = taller.pedir_numero_con_reintentos("ID de la orden: ", "entero")
                 if orden_id is None:
                     continue
-                    
-                if taller.ordenes.orden_existe(orden_id):
-                    detalles = taller.ordenes.obtener_detalles_orden(orden_id)
-                    if detalles:
-                        print(f"\n📋 DETALLES COMPLETOS DE LA ORDEN #{orden_id}")
-                        print("="*60)
-                        print(f"  🔧 INFORMACIÓN DE LA ORDEN:")
-                        print(f"     📅 Fecha inicio: {detalles['fecha_inicio']}")
-                        print(f"     📅 Fecha fin: {detalles['fecha_fin']}")
-                        print(f"     📝 Descripción: {detalles['descripcion_trabajo']}")
-                        print(f"     🛠️  Tipo servicio: {detalles['tipo_servicio']}")
-                        print(f"     ⏰ Horas trabajadas: {detalles['horas_trabajadas']}")
-                        print(f"     🛣️  Kilometraje: {detalles['kilometraje']} {detalles['unidad_kilometraje']}")
-                        
-                        print(f"\n  💰 INFORMACIÓN FINANCIERA:")
-                        print(f"     💵 Costo repuestos: ${detalles['costo_repuestos']:,.2f}")
-                        print(f"     👷 Costo mano obra: ${detalles['costo_mano_obra']:,.2f}")
-                        print(f"     💰 Precio final: ${detalles['precio_final']:,.2f}")
-                        
-                        print(f"\n  🚗 INFORMACIÓN DEL VEHÍCULO:")
-                        print(f"     🚙 Vehículo: {detalles['vehiculo_marca']} {detalles['vehiculo_modelo']} {detalles['vehiculo_año']}")
-                        print(f"     🪪 Placa: {detalles['vehiculo_placa']}")
-                        
-                        print(f"\n  👥 INFORMACIÓN DE CONTACTO:")
-                        print(f"     👤 Cliente: {detalles['cliente_nombre']}")
-                        print(f"     📞 Teléfono: {detalles['cliente_telefono'] or 'No tiene'}")
-                        print(f"     👷 Empleado: {detalles['empleado_nombre'] or 'No asignado'}")
-                        print("="*60)
-                    else:
-                        print(f"❌ Error al obtener detalles de la orden #{orden_id}")
+                
+                detalles = taller.ordenes.obtener_detalles_orden(orden_id)
+                if detalles:
+                    print(f"\n📋 DETALLES DE ORDEN #{detalles['id']}:")
+                    print(f"   🚗 Vehículo: {detalles['vehiculo_marca']} {detalles['vehiculo_modelo']} {detalles['vehiculo_año']}")
+                    print(f"   🏷️  Placa: {detalles['vehiculo_placa']}")
+                    print(f"   👤 Cliente: {detalles['cliente_nombre']} - 📞 {detalles['cliente_telefono'] or 'No tiene'}")
+                    print(f"   👷 Empleado: {detalles['empleado_nombre'] or 'No asignado'}")
+                    print(f"   📅 Fechas: {detalles['fecha_inicio']} a {detalles['fecha_fin']}")
+                    print(f"   🔧 Tipo servicio: {detalles['tipo_servicio']}")
+                    print(f"   ⏱️  Horas trabajadas: {detalles['horas_trabajadas']}")
+                    print(f"   💰 Costo repuestos: ${detalles['costo_repuestos']:.2f}")
+                    print(f"   💰 Costo mano obra: ${detalles['costo_mano_obra']:.2f}")
+                    print(f"   💰 Precio final: ${detalles['precio_final']:.2f}")
+                    print(f"   🛣️  Kilometraje: {detalles['kilometraje']} {detalles['unidad_kilometraje']}")
+                    print(f"   📝 Descripción: {detalles['descripcion_trabajo']}")
                 else:
-                    print(f"❌ La orden #{orden_id} no existe")
-            
+                    print("❌ No se encontró la orden con ese ID.")
+
             elif opcion == "8":
                 # Opción 8: Editar Cliente
                 print("\n✏️ EDITAR CLIENTE")
                 cliente_id = taller.seleccionar_cliente_interactivo()
                 if cliente_id is None:
                     continue
-                    
-                detalles = taller.clientes.detalles_cliente(cliente_id)
-                if not detalles:
-                    print("❌ Cliente no encontrado")
+                
+                nuevo_nombre = input("Nuevo nombre del cliente: ").strip()
+                if not nuevo_nombre:
+                    print("❌ El nombre no puede estar vacío.")
                     continue
-                    
-                cliente_actual = detalles['cliente']
-                print(f"\n📝 Editando cliente: {cliente_actual[0]}")
-                print("¿Qué deseas editar?")
-                print("1. Nombre")
-                print("2. Teléfono")
-                print("3. Ambos")
-                print("4. Cancelar")
                 
-                opcion_editar = input("\nSelecciona una opción: ").strip()
-                
-                nuevo_nombre = cliente_actual[0]
-                nuevo_telefono = cliente_actual[1]
-                
-                if opcion_editar in ["1", "3"]:
-                    nuevo_nombre = input("Nuevo nombre: ").strip()
-                    if not nuevo_nombre:
-                        print("❌ Error: El nombre no puede estar vacío.")
-                        continue
-                
-                if opcion_editar in ["2", "3"]:
-                    nuevo_telefono = taller.pedir_telefono_con_reintentos("Nuevo teléfono (opcional, Enter para mantener actual): ")
-                
-                if opcion_editar == "4":
-                    print("ℹ️ Edición cancelada")
-                    continue
+                nuevo_telefono = taller.pedir_telefono_con_reintentos("Nuevo teléfono (opcional): ", obligatorio=False)
                 
                 resultado = taller.clientes.editar_cliente(cliente_id, nuevo_nombre, nuevo_telefono)
                 print(resultado)
-                
+
             elif opcion == "9":
                 # Opción 9: Editar Empleado
                 print("\n✏️ EDITAR EMPLEADO")
                 empleado_id = taller.pedir_numero_con_reintentos("ID del empleado a editar: ", "entero")
                 if empleado_id is None:
                     continue
-                    
+                
                 if not taller.empleados.empleado_existe(empleado_id):
-                    print("❌ Error: El empleado no existe")
+                    print("❌ No existe un empleado con ese ID.")
                     continue
                 
-                # Obtener información actual del empleado
-                cursor = taller.db.execute_query('SELECT nombre, telefono FROM empleados WHERE id = ?', (empleado_id,))
-                empleado_actual = cursor.fetchone()
+                nuevo_nombre = input("Nuevo nombre del empleado: ").strip()
+                if not nuevo_nombre:
+                    print("❌ El nombre no puede estar vacío.")
+                    continue
                 
-                print(f"\n📝 Editando empleado: {empleado_actual[0]}")
-                print("¿Qué deseas editar?")
-                print("1. Nombre")
-                print("2. Teléfono")
-                print("3. Ambos")
-                print("4. Cancelar")
-                
-                opcion_editar = input("\nSelecciona una opción: ").strip()
-                
-                nuevo_nombre = empleado_actual[0]
-                nuevo_telefono = empleado_actual[1]
-                
-                if opcion_editar in ["1", "3"]:
-                    nuevo_nombre = input("Nuevo nombre: ").strip()
-                    if not nuevo_nombre:
-                        print("❌ Error: El nombre no puede estar vacío.")
-                        continue
-                
-                if opcion_editar in ["2", "3"]:
-                    nuevo_telefono = taller.pedir_telefono_con_reintentos("Nuevo teléfono: ", obligatorio=True)
-                    if nuevo_telefono is None:
-                        continue
-                
-                if opcion_editar == "4":
-                    print("ℹ️ Edición cancelada")
+                nuevo_telefono = taller.pedir_telefono_con_reintentos("Nuevo teléfono del empleado: ", obligatorio=True)
+                if nuevo_telefono is None:
                     continue
                 
                 resultado = taller.empleados.editar_empleado(empleado_id, nuevo_nombre, nuevo_telefono)
                 print(resultado)
-                
+
             elif opcion == "10":
                 # Opción 10: Editar Orden
                 print("\n✏️ EDITAR ORDEN")
                 orden_id = taller.pedir_numero_con_reintentos("ID de la orden a editar: ", "entero")
                 if orden_id is None:
                     continue
-                    
+                
                 if not taller.ordenes.orden_existe(orden_id):
-                    print("❌ Error: La orden no existe")
+                    print("❌ No existe una orden con ese ID.")
                     continue
                 
-                # Obtener información actual de la orden
-                cursor = taller.db.execute_query('''
-                    SELECT descripcion_trabajo, precio_final, tipo_servicio, kilometraje 
-                    FROM ordenes_trabajo WHERE id = ?
-                ''', (orden_id,))
-                orden_actual = cursor.fetchone()
-                
-                print(f"\n📝 Editando orden #{orden_id}")
-                print("¿Qué deseas editar?")
-                print("1. Descripción del trabajo")
-                print("2. Precio final")
-                print("3. Tipo de servicio")
-                print("4. Kilometraje")
-                print("5. Cancelar")
-                
-                opcion_editar = input("\nSelecciona una opción: ").strip()
-                
-                nueva_descripcion = orden_actual[0]
-                nuevo_precio = orden_actual[1]
-                nuevo_tipo = orden_actual[2]
-                nuevo_km = orden_actual[3]
-                
-                if opcion_editar == "1":
-                    nueva_descripcion = input("Nueva descripción: ").strip()
-                    if not nueva_descripcion:
-                        print("❌ Error: La descripción no puede estar vacía.")
-                        continue
-                elif opcion_editar == "2":
-                    nuevo_precio = taller.pedir_numero_con_reintentos("Nuevo precio: ", "decimal")
-                    if nuevo_precio is None:
-                        continue
-                elif opcion_editar == "3":
-                    nuevo_tipo = input("Nuevo tipo de servicio: ").strip()
-                    if not nuevo_tipo:
-                        print("❌ Error: El tipo de servicio no puede estar vacío.")
-                        continue
-                elif opcion_editar == "4":
-                    nuevo_km = taller.pedir_numero_con_reintentos("Nuevo kilometraje: ", "decimal")
-                    if nuevo_km is None:
-                        continue
-                elif opcion_editar == "5":
-                    print("ℹ️ Edición cancelada")
+                nueva_descripcion = input("Nueva descripción del trabajo: ").strip()
+                if not nueva_descripcion:
+                    print("❌ La descripción no puede estar vacía.")
                     continue
-                else:
-                    print("❌ Opción inválida")
+                
+                nuevo_precio = taller.pedir_numero_con_reintentos("Nuevo precio final ($): ", "decimal")
+                if nuevo_precio is None:
+                    continue
+                
+                nuevo_tipo = input("Nuevo tipo de servicio: ").strip()
+                if not nuevo_tipo:
+                    print("❌ El tipo de servicio no puede estar vacío.")
+                    continue
+                
+                nuevo_km = taller.pedir_numero_con_reintentos("Nuevo kilometraje: ", "decimal")
+                if nuevo_km is None:
                     continue
                 
                 resultado = taller.ordenes.editar_orden(orden_id, nueva_descripcion, nuevo_precio, nuevo_tipo, nuevo_km)
                 print(resultado)
-            
+
             elif opcion == "11":
-                # Opción 11: Reportes Avanzados
-                print("\n📊 REPORTES Y ANÁLISIS AVANZADOS")
-                while True:
-                    print("\n🔍 TIPOS DE REPORTES DISPONIBLES:")
-                    print("  1. 📈 Reporte Semanal")
-                    print("  2. 📅 Reporte Mensual") 
-                    print("  3. 🗓️ Reporte Anual")
-                    print("  4. 📊 Reportes de Años Pasados")
-                    print("  5. 📈 Proyección de Crecimiento")
-                    print("  6. 🔮 Predicción de Alta Demanda")
-                    print("  7. 📊 Generar Gráficas")
-                    print("  0. ↩️ Volver al menú principal")
-                    
-                    sub_opcion = input("\nSelecciona tipo de reporte: ").strip()
-                    
-                    if sub_opcion == "0":
-                        break
-                    elif sub_opcion == "1":
-                        reporte = taller.reportes.reporte_periodo('semana')
-                        print(f"\n📈 REPORTE SEMANAL ({reporte['fecha_inicio']} a hoy)")
-                        print(f"  💰 Ganancias: ${reporte['ganancias']:,.2f}")
-                        print(f"  ⏰ Horas trabajadas: {reporte['horas_trabajadas']} hrs")
-                        print(f"  🔧 Trabajos completados: {reporte['trabajos_completados']}")
-                        
-                        if reporte['servicios_populares']:
-                            print(f"\n  🏆 SERVICIOS MÁS SOLICITADOS:")
-                            for servicio in reporte['servicios_populares']:
-                                print(f"    • {servicio[0]}: {servicio[1]} trabajos - ${servicio[2]:,.2f}")
-                                
-                    elif sub_opcion == "2":
-                        reporte = taller.reportes.reporte_periodo('mes')
-                        print(f"\n📅 REPORTE MENSUAL ({reporte['fecha_inicio']} a hoy)")
-                        print(f"  💰 Ganancias: ${reporte['ganancias']:,.2f}")
-                        print(f"  ⏰ Horas trabajadas: {reporte['horas_trabajadas']} hrs")
-                        print(f"  🔧 Trabajos completados: {reporte['trabajos_completados']}")
-                        
-                        if reporte['servicios_populares']:
-                            print(f"\n  🏆 SERVICIOS MÁS SOLICITADOS:")
-                            for servicio in reporte['servicios_populares']:
-                                print(f"    • {servicio[0]}: {servicio[1]} trabajos - ${servicio[2]:,.2f}")
-                                
-                    elif sub_opcion == "3":
-                        reporte = taller.reportes.reporte_periodo('año')
-                        print(f"\n🗓️ REPORTE ANUAL ({reporte['fecha_inicio']} a hoy)")
-                        print(f"  💰 Ganancias: ${reporte['ganancias']:,.2f}")
-                        print(f"  ⏰ Horas trabajadas: {reporte['horas_trabajadas']} hrs")
-                        print(f"  🔧 Trabajos completados: {reporte['trabajos_completados']}")
-                        
-                        if reporte['servicios_populares']:
-                            print(f"\n  🏆 SERVICIOS MÁS SOLICITADOS:")
-                            for servicio in reporte['servicios_populares']:
-                                print(f"    • {servicio[0]}: {servicio[1]} trabajos - ${servicio[2]:,.2f}")
-                                
-                    elif sub_opcion == "4":
-                        año = taller.pedir_numero_con_reintentos("¿Qué año deseas consultar? (ej: 2023): ", "entero")
-                        if año is None:
-                            continue
-                            
+                # Opción 11: Ver Reportes Avanzados
+                print("\n📊 REPORTES AVANZADOS")
+                print("  1. Reporte Semanal")
+                print("  2. Reporte Mensual")
+                print("  3. Reporte Anual")
+                print("  4. Reporte Histórico por Año")
+                print("  5. Proyección de Crecimiento")
+                print("  6. Predicción de Alta Demanda")
+                
+                sub_opcion = input("\nSelecciona tipo de reporte: ").strip()
+                
+                if sub_opcion == "1":
+                    reporte = taller.reportes.reporte_periodo('semana')
+                    mostrar_reporte(reporte, taller)
+                elif sub_opcion == "2":
+                    reporte = taller.reportes.reporte_periodo('mes')
+                    mostrar_reporte(reporte, taller)
+                elif sub_opcion == "3":
+                    reporte = taller.reportes.reporte_periodo('año')
+                    mostrar_reporte(reporte, taller)
+                elif sub_opcion == "4":
+                    año = taller.pedir_numero_con_reintentos("Año para el reporte histórico: ", "entero")
+                    if año is not None:
                         reporte = taller.reportes.reporte_periodo_historico(año)
-                        
-                        print(f"\n📊 REPORTE ANUAL {año}")
-                        print(f"  💰 Ganancias: ${reporte['ganancias']:,.2f}")
-                        print(f"  ⏰ Horas trabajadas: {reporte['horas_trabajadas']} hrs")
-                        print(f"  🔧 Trabajos completados: {reporte['trabajos_completados']}")
-                        
-                        if reporte['servicios_populares']:
-                            print(f"\n  🏆 SERVICIOS MÁS SOLICITADOS:")
-                            for servicio in reporte['servicios_populares']:
-                                print(f"    • {servicio[0]}: {servicio[1]} trabajos - ${servicio[2]:,.2f}")
-                                
-                    elif sub_opcion == "5":
-                        print("\n📈 PROYECCIÓN DE CRECIMIENTO")
-                        proyeccion = taller.reportes.proyeccion_crecimiento()
-                        
-                        if proyeccion is None:
-                            print("❌ No hay suficientes datos históricos para generar proyecciones.")
-                            print("   Se necesitan al menos 3 meses de datos.")
-                            continue
-                        
-                        print(f"\n📊 ANÁLISIS DE CRECIMIENTO")
-                        print(f"  📈 Crecimiento promedio mensual: {proyeccion['crecimiento_promedio']*100:.1f}%")
-                        
-                        print(f"\n🎯 PROYECCIÓN PRÓXIMOS 6 MESES:")
+                        mostrar_reporte(reporte, taller)
+                elif sub_opcion == "5":
+                    proyeccion = taller.reportes.proyeccion_crecimiento()
+                    if proyeccion:
+                        print(f"\n📈 PROYECCIÓN DE CRECIMIENTO:")
+                        print(f"   📊 Crecimiento promedio: {proyeccion['crecimiento_promedio']*100:.1f}% mensual")
+                        print(f"\n   🔮 PROYECCIONES PRÓXIMOS 6 MESES:")
                         for mes, ingreso in proyeccion['proyecciones']:
-                            print(f"  • {mes}: ${ingreso:,.2f}")
+                            print(f"      {mes}: ${ingreso:.2f}")
                         
-                        print(f"\n💡 RECOMENDACIÓN:")
-                        if proyeccion['crecimiento_promedio'] > 0.1:
-                            print("  ¡Excelente crecimiento! Considera expandir capacidad.")
-                        elif proyeccion['crecimiento_promedio'] > 0.05:
-                            print("  Crecimiento saludable. Mantén la estrategia actual.")
-                        else:
-                            print("  Crecimiento lento. Considera promociones o nuevos servicios.")
-                            
-                    elif sub_opcion == "6":
-                        print("\n🔮 PREDICCIÓN DE ALTA DEMANDA")
-                        prediccion = taller.reportes.predecir_alta_demanda()
-                        
-                        print(f"\n📅 MESES CON MAYOR DEMANDA HISTÓRICA:")
-                        for mes in prediccion['meses_alta_demanda']:
-                            print(f"  • {mes['mes']}: {mes['trabajos']} trabajos - ${mes['precio_promedio']:,.2f} promedio")
-                        
-                        print(f"\n💡 RECOMENDACIONES:")
-                        print("  • Prepara inventario adicional en estos meses")
-                        print("  • Considera ofrecer promociones en meses de baja demanda")
-                        print("  • Programa mantenimiento preventivo en períodos tranquilos")
-                        
-                    elif sub_opcion == "7":
-                        print("\n📊 GENERAR GRÁFICAS")
-                        print("  1. 📈 Gráfica de Servicios Populares (Este Mes)")
-                        print("  2. 📊 Gráfica de Ingresos Mensuales")
-                        print("  3. 🎯 Gráfica de Proyección")
-                        print("  0. ↩️ Volver")
-                        
-                        opcion_grafica = input("\nSelecciona gráfica: ").strip()
-                        
-                        if opcion_grafica == "1":
-                            reporte = taller.reportes.reporte_periodo('mes')
-                            taller.reportes.crear_grafica_servicios_populares(reporte, 'servicios_populares_mes')
-                        elif opcion_grafica == "2":
-                            proyeccion = taller.reportes.proyeccion_crecimiento()
-                            if proyeccion:
-                                taller.reportes.crear_grafica_ingresos_mensuales(proyeccion['datos_historicos'], 'ingresos_mensuales')
-                            else:
-                                print("❌ No hay suficientes datos para generar la gráfica")
-                        elif opcion_grafica == "3":
-                            proyeccion = taller.reportes.proyeccion_crecimiento()
-                            if proyeccion:
-                                taller.reportes.crear_grafica_proyeccion(proyeccion, 'proyeccion_crecimiento')
-                            else:
-                                print("❌ No hay suficientes datos para generar la gráfica")
-                        elif opcion_grafica == "0":
-                            continue
-                        else:
-                            print("❌ Opción no válida")
+                        if input("\n¿Generar gráfica? (s/n): ").lower() == 's':
+                            taller.reportes.crear_grafica_proyeccion(proyeccion, f"proyeccion_crecimiento_{datetime.now().strftime('%Y%m%d')}")
                     else:
-                        print("❌ Opción no válida")
-            
-            elif opcion == "12":
-                # Opción 12: Recordatorios Inteligentes
-                print("\n🧠 RECORDATORIOS INTELIGENTES")
-                dias = taller.pedir_numero_con_reintentos("¿En cuántos días quieres buscar recordatorios? (ej: 30): ", "entero")
-                if dias is None:
-                    dias = 30
-                
-                recordatorios = taller.recordatorios.obtener_recordatorios_mantenimiento(dias)
-                
-                if recordatorios:
-                    print(f"\n🔔 VEHÍCULOS CON MANTENIMIENTO PRÓXIMO ({len(recordatorios)}):")
-                    for i, recordatorio in enumerate(recordatorios, 1):
-                        placa, marca, modelo, proximo_mantenimiento, nombre, telefono = recordatorio
-                        print(f"\n   {i}. {marca} {modelo} - {placa}")
-                        print(f"      👤 Cliente: {nombre} - 📞 {telefono or 'No tiene'}")
-                        print(f"      📅 Próximo mantenimiento: {proximo_mantenimiento}")
-                        dias_restantes = (datetime.strptime(proximo_mantenimiento, '%Y-%m-%d') - datetime.now()).days
-                        print(f"      ⏰ Días restantes: {dias_restantes} días")
-                        print("      " + "-" * 50)
+                        print("❌ No hay suficientes datos para generar proyecciones.")
+                elif sub_opcion == "6":
+                    prediccion = taller.reportes.predecir_alta_demanda()
+                    print(f"\n🎯 PREDICCIÓN DE ALTA DEMANDA:")
+                    print(f"   📅 MESES CON MAYOR DEMANDA HISTÓRICA:")
+                    for i, mes_data in enumerate(prediccion['meses_alta_demanda'], 1):
+                        print(f"      {i}. {mes_data['mes']}: {mes_data['trabajos']} trabajos (${mes_data['precio_promedio']:.2f} promedio)")
                 else:
-                    print(f"\n✅ No hay vehículos que necesiten mantenimiento en los próximos {dias} días")
+                    print("❌ Opción de reporte no válida.")
+
+            # OPCIONES 12-14 (las que ya tienes implementadas)
+            elif opcion == "12":
+                taller.menu_recordatorios_inteligentes()
+            
+            elif opcion == "13":
+                taller.analizar_todos_los_servicios()
+            
+            elif opcion == "14":
+                taller.generar_reporte_proactivo()
             
             elif opcion == "0":
                 print("\n👋 ¡Gracias por usar el Sistema de Gestión del Taller SEYMO!")
