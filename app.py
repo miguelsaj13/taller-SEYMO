@@ -84,13 +84,13 @@ class DatabaseManager:
         cursor = self.conn.cursor()
         
         try:
-            # Tabla clientes
+            # Tabla clientes (SIN fecha_registro, CON nit)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS clientes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     nombre TEXT NOT NULL,
                     telefono TEXT UNIQUE,
-                    fecha_registro DATE DEFAULT CURRENT_DATE
+                    nit TEXT UNIQUE
                 )
             ''')
             
@@ -156,17 +156,40 @@ class DatabaseManager:
         cursor = self.conn.cursor()
         
         try:
+            print("🔄 Verificando estructura de tablas...")
+            
+            # VERIFICAR TABLA CLIENTES PRIMERO
+            cursor.execute("PRAGMA table_info(clientes)")
+            columnas_clientes = [col[1] for col in cursor.fetchall()]
+            print(f"📋 Columnas actuales en clientes: {columnas_clientes}")
+            
+            # Agregar columna nit si no existe
+            if 'nit' not in columnas_clientes:
+                print("🔄 Agregando columna 'nit' a tabla clientes...")
+                cursor.execute('ALTER TABLE clientes ADD COLUMN nit TEXT UNIQUE')
+                print("✅ Columna 'nit' agregada a clientes")
+            
+            # VERIFICAR TABLA VEHÍCULOS
             cursor.execute("PRAGMA table_info(vehiculos)")
-            columnas = [col[1] for col in cursor.fetchall()]
+            columnas_vehiculos = [col[1] for col in cursor.fetchall()]
+            print(f"📋 Columnas actuales en vehiculos: {columnas_vehiculos}")
             
-            if 'proximo_mantenimiento' not in columnas:
+            if 'proximo_mantenimiento' not in columnas_vehiculos:
+                print("🔄 Agregando columna 'proximo_mantenimiento' a vehiculos...")
                 cursor.execute('ALTER TABLE vehiculos ADD COLUMN proximo_mantenimiento DATE')
+                print("✅ Columna 'proximo_mantenimiento' agregada a vehiculos")
             
-            if 'kilometraje_ultimo_mantenimiento' not in columnas:
+            if 'kilometraje_ultimo_mantenimiento' not in columnas_vehiculos:
+                print("🔄 Agregando columna 'kilometraje_ultimo_mantenimiento' a vehiculos...")
                 cursor.execute('ALTER TABLE vehiculos ADD COLUMN kilometraje_ultimo_mantenimiento REAL')
-                
+                print("✅ Columna 'kilometraje_ultimo_mantenimiento' agregada a vehiculos")
+            
+            self.conn.commit()
+            print("✅ Estructura de tablas actualizada correctamente")
+            
         except sqlite3.Error as e:
-            print(f"⚠️  Advertencia al verificar tablas: {e}")
+            self.conn.rollback()
+            print(f"❌ Error al actualizar tablas: {e}")
     
     def execute_query(self, query: str, params: tuple = ()) -> sqlite3.Cursor:
         """Ejecuta una consulta y retorna el cursor"""
@@ -177,6 +200,35 @@ class DatabaseManager:
     def commit(self):
         """Realiza commit"""
         self.conn.commit()
+
+    def diagnosticar_estructura_bd(self):
+        """Diagnostica la estructura actual de la base de datos"""
+        cursor = self.conn.cursor()
+        
+        try:
+            print("\n🔍 DIAGNÓSTICO DE ESTRUCTURA DE BD")
+            
+            # Verificar tabla clientes
+            cursor.execute("PRAGMA table_info(clientes)")
+            columnas = cursor.fetchall()
+            print("\n📋 TABLA CLIENTES:")
+            for col in columnas:
+                print(f"   - {col[1]} ({col[2]})")
+            
+            # Verificar datos existentes
+            cursor.execute("SELECT COUNT(*) FROM clientes")
+            total_clientes = cursor.fetchone()[0]
+            print(f"   Total de clientes: {total_clientes}")
+            
+            # Verificar tabla vehiculos
+            cursor.execute("PRAGMA table_info(vehiculos)")
+            columnas_vehiculos = cursor.fetchall()
+            print("\n📋 TABLA VEHICULOS:")
+            for col in columnas_vehiculos:
+                print(f"   - {col[1]} ({col[2]})")
+            
+        except sqlite3.Error as e:
+            print(f"❌ Error en diagnóstico: {e}")
 
 class Validator:
     """Maneja todas las validaciones de datos"""
@@ -208,6 +260,20 @@ class Validator:
             return None
         
         return telefono_limpio
+    
+    @staticmethod
+    def validar_nit(nit: str) -> Optional[str]:
+        """Valida que el NIT contenga solo números, letras y guiones, y tenga longitud razonable"""
+        if nit is None or nit.strip() == "":
+            return None
+        
+        # Permitir números, guiones, letras y espacios
+        nit_limpio = ''.join(filter(lambda c: c.isalnum() or c in '- ', nit))
+        
+        if len(nit_limpio) < 3 or len(nit_limpio) > 20:
+            return None
+        
+        return nit_limpio
     
     @staticmethod
     def validar_fecha(fecha_str: str, permitir_futuro: bool = True, permitir_pasado: bool = True) -> Optional[datetime.date]:
@@ -260,18 +326,23 @@ class ClienteManager:
         self.db = db_manager
         self.validator = validator
     
-    def agregar_cliente(self, nombre: str, telefono: Optional[str] = None) -> Optional[int]:
+    def agregar_cliente(self, nombre: str, telefono: Optional[str] = None, nit: Optional[str] = None) -> Optional[int]:
         """Agrega un nuevo cliente a la base de datos"""
         try:
             cursor = self.db.execute_query(
-                'INSERT INTO clientes (nombre, telefono) VALUES (?, ?)', 
-                (nombre, telefono)
+                'INSERT INTO clientes (nombre, telefono, nit) VALUES (?, ?, ?)', 
+                (nombre, telefono, nit)
             )
             self.db.commit()
             print(f"✅ Cliente '{nombre}' agregado con ID: {cursor.lastrowid}")
             return cursor.lastrowid
-        except sqlite3.IntegrityError:
-            print("❌ Error: Ya existe un cliente con ese teléfono")
+        except sqlite3.IntegrityError as e:
+            if "telefono" in str(e):
+                print("❌ Error: Ya existe un cliente con ese teléfono")
+            elif "nit" in str(e):
+                print("❌ Error: Ya existe un cliente con ese NIT")
+            else:
+                print("❌ Error de integridad en la base de datos")
             return None
     
     def cliente_existe(self, cliente_id: int) -> bool:
@@ -282,23 +353,28 @@ class ClienteManager:
     def buscar_cliente_por_nombre(self, nombre_buscar: str) -> List[Tuple]:
         """Busca clientes por nombre"""
         cursor = self.db.execute_query(
-            'SELECT id, nombre, telefono FROM clientes WHERE nombre LIKE ? ORDER BY nombre',
+            'SELECT id, nombre, telefono, nit FROM clientes WHERE nombre LIKE ? ORDER BY nombre',
             (f'%{nombre_buscar}%',)
         )
         return cursor.fetchall()
     
-    def editar_cliente(self, cliente_id: int, nuevo_nombre: str, nuevo_telefono: Optional[str]) -> str:
+    def editar_cliente(self, cliente_id: int, nuevo_nombre: str, nuevo_telefono: Optional[str], nuevo_nit: Optional[str]) -> str:
         """Edita la información de un cliente"""
         try:
             self.db.execute_query(
-                'UPDATE clientes SET nombre = ?, telefono = ? WHERE id = ?',
-                (nuevo_nombre, nuevo_telefono, cliente_id)
+                'UPDATE clientes SET nombre = ?, telefono = ?, nit = ? WHERE id = ?',
+                (nuevo_nombre, nuevo_telefono, nuevo_nit, cliente_id)
             )
             self.db.commit()
             print(f"✅ Cliente ID {cliente_id} actualizado")
             return f"✅ Cliente ID {cliente_id} actualizado"
-        except sqlite3.IntegrityError:
-            return "❌ Error: Ya existe un cliente con ese teléfono"
+        except sqlite3.IntegrityError as e:
+            if "telefono" in str(e):
+                return "❌ Error: Ya existe un cliente con ese teléfono"
+            elif "nit" in str(e):
+                return "❌ Error: Ya existe un cliente con ese NIT"
+            else:
+                return "❌ Error de integridad en la base de datos"
     
     def detalles_cliente(self, cliente_id: int) -> Optional[Dict]:
         """Obtiene detalles completos de un cliente"""
@@ -306,7 +382,7 @@ class ClienteManager:
             return None
         
         cursor = self.db.execute_query(
-            'SELECT nombre, telefono, fecha_registro FROM clientes WHERE id = ?', 
+            'SELECT nombre, telefono, nit FROM clientes WHERE id = ?', 
             (cliente_id,)
         )
         cliente_info = cursor.fetchone()
@@ -321,6 +397,13 @@ class ClienteManager:
             'cliente': cliente_info,
             'vehiculos': vehiculos
         }
+    
+    def nit_existe(self, nit: str) -> bool:
+        """Verifica si un NIT ya existe"""
+        if not nit:
+            return False
+        cursor = self.db.execute_query('SELECT id FROM clientes WHERE nit = ?', (nit,))
+        return cursor.fetchone() is not None
 
 class VehiculoManager:
     """Gestiona todas las operaciones relacionadas con vehículos"""
@@ -368,7 +451,7 @@ class VehiculoManager:
             return None
         
         cursor = self.db.execute_query('''
-            SELECT v.marca, v.modelo, v.año, v.placa, v.color, c.nombre, c.telefono
+            SELECT v.marca, v.modelo, v.año, v.placa, v.color, c.nombre, c.telefono, c.nit
             FROM vehiculos v
             JOIN clientes c ON v.cliente_id = c.id
             WHERE v.id = ?
@@ -458,7 +541,7 @@ class OrdenManager:
                 o.tipo_servicio, o.horas_trabajadas, o.costo_repuestos, 
                 o.costo_mano_obra, o.precio_final, o.kilometraje, o.unidad_kilometraje,
                 v.marca, v.modelo, v.placa, v.año,
-                c.nombre as cliente_nombre, c.telefono as cliente_telefono,
+                c.nombre as cliente_nombre, c.telefono as cliente_telefono, c.nit as cliente_nit,
                 e.nombre as empleado_nombre
             FROM ordenes_trabajo o
             JOIN vehiculos v ON o.vehiculo_id = v.id
@@ -490,7 +573,8 @@ class OrdenManager:
             'vehiculo_año': orden_info[14],
             'cliente_nombre': orden_info[15],
             'cliente_telefono': orden_info[16],
-            'empleado_nombre': orden_info[17]
+            'cliente_nit': orden_info[17],
+            'empleado_nombre': orden_info[18]
         }
     
     def agregar_orden(self, numero_orden: int, vehiculo_id: int, empleado_id: int, 
@@ -896,7 +980,7 @@ class RecordatoriosInteligentes:
         
         # Obtener todos los vehículos que han tenido este servicio
         cursor = self.db.execute_query('''
-            SELECT DISTINCT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono
+            SELECT DISTINCT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono, c.nit
             FROM vehiculos v
             JOIN ordenes_trabajo o ON v.id = o.vehiculo_id
             JOIN clientes c ON v.cliente_id = c.id
@@ -907,7 +991,7 @@ class RecordatoriosInteligentes:
         resultados = []
         
         for vehiculo in vehiculos:
-            vehiculo_id, marca, modelo, placa, cliente, telefono = vehiculo
+            vehiculo_id, marca, modelo, placa, cliente, telefono, nit = vehiculo
             
             # Obtener último servicio de este tipo
             ultimo_servicio = self.obtener_ultimo_servicio_vehiculo(vehiculo_id, tipo_servicio)
@@ -937,6 +1021,7 @@ class RecordatoriosInteligentes:
                         'placa': placa,
                         'cliente': cliente,
                         'telefono': telefono,
+                        'nit': nit,
                         'ultimo_servicio': fecha_ultimo if isinstance(fecha_ultimo, str) else fecha_ultimo.strftime('%Y-%m-%d'),
                         'km_ultimo': km_ultimo,
                         'proximo_estimado': fecha_estimada.strftime('%Y-%m-%d'),
@@ -953,7 +1038,7 @@ class RecordatoriosInteligentes:
     def obtener_vehiculos_sin_servicio(self, tipo_servicio: str) -> List[Tuple]:
         """Obtiene vehículos que nunca han tenido este tipo de servicio"""
         cursor = self.db.execute_query('''
-            SELECT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono
+            SELECT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono, c.nit
             FROM vehiculos v
             JOIN clientes c ON v.cliente_id = c.id
             WHERE v.id NOT IN (
@@ -986,17 +1071,62 @@ class TallerSEYMO:
     """Clase principal que coordina todas las funcionalidades del taller"""
     
     def __init__(self):
-        self.db = DatabaseManager()
-        self.validator = Validator()
-        self.clientes = ClienteManager(self.db, self.validator)
-        self.vehiculos = VehiculoManager(self.db, self.validator)
-        self.empleados = EmpleadoManager(self.db, self.validator)
-        self.ordenes = OrdenManager(self.db, self.validator)
-        self.reportes = ReportManager(self.db)
-        self.recordatorios = RecordatoriosInteligentes(self.db)
-        
-        print("✅ Sistema Taller SEYMO inicializado correctamente")
+        try:
+            self.db = DatabaseManager()
+            self.validator = Validator()
+            self.clientes = ClienteManager(self.db, self.validator)
+            self.vehiculos = VehiculoManager(self.db, self.validator)
+            self.empleados = EmpleadoManager(self.db, self.validator)
+            self.ordenes = OrdenManager(self.db, self.validator)
+            self.reportes = ReportManager(self.db)
+            self.recordatorios = RecordatoriosInteligentes(self.db)
+            
+            # Diagnosticar estructura al inicio
+            self.db.diagnosticar_estructura_bd()
+            
+            print("✅ Sistema Taller SEYMO inicializado correctamente")
+            
+        except Exception as e:
+            print(f"❌ Error crítico iniciando el sistema: {e}")
+            print("🔄 Intentando recrear base de datos...")
+            self._recrear_base_datos()
     
+    def _recrear_base_datos(self):
+        """Recrea la base de datos desde cero"""
+        import os
+        import sqlite3
+        
+        db_path = 'database/taller.db'
+        
+        # Cerrar conexión si existe
+        if hasattr(self, 'db') and self.db.conn:
+            self.db.conn.close()
+        
+        # Eliminar archivo existente
+        if os.path.exists(db_path):
+            os.remove(db_path)
+            print("🗑️ Base de datos anterior eliminada")
+        
+        # Recrear carpetas
+        crear_estructura_carpetas()
+        
+        # Reintentar inicialización
+        try:
+            self.db = DatabaseManager()
+            self.validator = Validator()
+            self.clientes = ClienteManager(self.db, self.validator)
+            self.vehiculos = VehiculoManager(self.db, self.validator)
+            self.empleados = EmpleadoManager(self.db, self.validator)
+            self.ordenes = OrdenManager(self.db, self.validator)
+            self.reportes = ReportManager(self.db)
+            self.recordatorios = RecordatoriosInteligentes(self.db)
+            
+            print("✅ Nueva base de datos creada exitosamente")
+            
+        except Exception as e:
+            print(f"❌ Error fatal: No se pudo crear la base de datos: {e}")
+            raise
+
     def pedir_numero_con_reintentos(self, mensaje: str, tipo: str = "entero", intentos: int = 5) -> Optional[float]:
         """Pide un número al usuario con reintentos y mensajes de error claros"""
         for intento in range(intentos):
@@ -1064,6 +1194,44 @@ class TallerSEYMO:
                 return None
         return None
     
+    def pedir_nit_con_reintentos(self, mensaje: str, obligatorio: bool = False, intentos: int = 5) -> Optional[str]:
+        """Pide un NIT con validación y reintentos"""
+        for intento in range(intentos):
+            try:
+                nit = input(mensaje).strip()
+                
+                if not obligatorio and not nit:
+                    return None
+                
+                if obligatorio and not nit:
+                    print("❌ Error: El NIT es obligatorio.")
+                    continue
+                
+                nit_validado = self.validator.validar_nit(nit)
+                if not nit_validado:
+                    print("❌ Error: El NIT debe contener solo números, letras y guiones (3-20 caracteres).")
+                    intentos_restantes = intentos - intento - 1
+                    if intentos_restantes > 0:
+                        print(f"💡 Te quedan {intentos_restantes} intentos.")
+                    continue
+                
+                if self.nit_existe(nit_validado):
+                    print("❌ Error: Este NIT ya está registrado en el sistema.")
+                    intentos_restantes = intentos - intento - 1
+                    if intentos_restantes > 0:
+                        print(f"💡 Te quedan {intentos_restantes} intentos.")
+                    continue
+                
+                return nit_validado
+                
+            except KeyboardInterrupt:
+                print("\n❌ Operación cancelada por el usuario.")
+                return None
+            except Exception as e:
+                print(f"❌ Error inesperado: {e}")
+                return None
+        return None
+    
     def telefono_existe(self, telefono: str) -> bool:
         """Verifica si un teléfono ya existe"""
         cursor = self.db.execute_query('SELECT id FROM clientes WHERE telefono = ?', (telefono,))
@@ -1072,6 +1240,10 @@ class TallerSEYMO:
         
         cursor = self.db.execute_query('SELECT id FROM empleados WHERE telefono = ?', (telefono,))
         return cursor.fetchone() is not None
+    
+    def nit_existe(self, nit: str) -> bool:
+        """Verifica si un NIT ya existe"""
+        return self.clientes.nit_existe(nit)
     
     def seleccionar_cliente_interactivo(self) -> Optional[int]:
         """Permite al usuario buscar y seleccionar un cliente interactivamente"""
@@ -1089,7 +1261,9 @@ class TallerSEYMO:
                 
                 print(f"\n✅ Se encontraron {len(clientes)} cliente(s):")
                 for i, cliente in enumerate(clientes, 1):
-                    print(f"   {i}. ID: {cliente[0]} - {cliente[1]} - Tel: {cliente[2] or 'No tiene'}")
+                    telefono_info = f" - Tel: {cliente[2]}" if cliente[2] else ""
+                    nit_info = f" - NIT: {cliente[3]}" if cliente[3] else ""
+                    print(f"   {i}. ID: {cliente[0]} - {cliente[1]}{telefono_info}{nit_info}")
                 
                 seleccion = input(f"\nSelecciona un cliente (1-{len(clientes)}) o 0 para buscar de nuevo: ").strip()
                 if seleccion == "0":
@@ -1250,7 +1424,7 @@ class TallerSEYMO:
             print(f"\n🚗 VEHÍCULOS PRÓXIMOS A '{tipo_servicio}' ({len(recordatorios)}):")
             for i, recordatorio in enumerate(recordatorios, 1):
                 print(f"\n   {i}. {recordatorio['marca']} {recordatorio['modelo']} - {recordatorio['placa']}")
-                print(f"      👤 Cliente: {recordatorio['cliente']} - 📞 {recordatorio['telefono'] or 'No tiene'}")
+                print(f"      👤 Cliente: {recordatorio['cliente']} - 📞 {recordatorio['telefono'] or 'No tiene'} - 🏢 {recordatorio['nit'] or 'No tiene'}")
                 print(f"      📅 Último servicio: {recordatorio['ultimo_servicio']} ({recordatorio['km_ultimo']} km)")
                 print(f"      🎯 Próximo estimado: {recordatorio['proximo_estimado']} ({recordatorio['km_estimado']:.0f} km)")
                 print(f"      ⏰ Días restantes: {recordatorio['dias_restantes']} días")
@@ -1265,7 +1439,8 @@ class TallerSEYMO:
             print(f"\n🚙 VEHÍCULOS SIN HISTORIAL DE '{tipo_servicio}' ({len(vehiculos_sin_servicio)}):")
             print("   (Podrían necesitar su primer servicio de este tipo)")
             for vehiculo in vehiculos_sin_servicio[:5]:  # Mostrar solo primeros 5
-                print(f"   • {vehiculo[1]} {vehiculo[2]} - {vehiculo[3]} - {vehiculo[4]}")
+                nit_info = f" - NIT: {vehiculo[6]}" if vehiculo[6] else ""
+                print(f"   • {vehiculo[1]} {vehiculo[2]} - {vehiculo[3]} - {vehiculo[4]}{nit_info}")
             
             if len(vehiculos_sin_servicio) > 5:
                 print(f"   ... y {len(vehiculos_sin_servicio) - 5} más")
@@ -1318,6 +1493,7 @@ class TallerSEYMO:
                     'tipo_servicio': tipo_servicio,
                     'cliente': recordatorio['cliente'],
                     'telefono': recordatorio['telefono'],
+                    'nit': recordatorio['nit'],
                     'vehiculo': f"{recordatorio['marca']} {recordatorio['modelo']}",
                     'placa': recordatorio['placa'],
                     'proximo_servicio': recordatorio['proximo_estimado'],
@@ -1332,6 +1508,7 @@ class TallerSEYMO:
             for i, cliente in enumerate(clientes_a_contactar, 1):
                 print(f"\n   {i}. {cliente['cliente']}")
                 print(f"      📞 Teléfono: {cliente['telefono'] or 'No tiene'}")
+                print(f"      🏢 NIT: {cliente['nit'] or 'No tiene'}")
                 print(f"      🚗 Vehículo: {cliente['vehiculo']} - {cliente['placa']}")
                 print(f"      🔧 Servicio: {cliente['tipo_servicio']}")
                 print(f"      📅 Próximo servicio: {cliente['proximo_servicio']}")
@@ -1408,7 +1585,7 @@ def menu_principal():
             
             opcion = input("\nSelecciona una opción: ").strip()
             
-            # OPCIONES 1-11 (FALTANTES)
+            # OPCIONES 1-11
             if opcion == "1":
                 # Opción 1: Nuevo Cliente + Vehículos
                 print("\n👤 REGISTRAR NUEVO CLIENTE Y VEHÍCULOS")
@@ -1421,8 +1598,11 @@ def menu_principal():
                 if telefono is None and input("¿Continuar sin teléfono? (s/n): ").lower() != 's':
                     continue
                 
+                # NUEVO: Pedir NIT
+                nit = taller.pedir_nit_con_reintentos("NIT del cliente (opcional): ", obligatorio=False)
+                
                 # Agregar cliente
-                cliente_id = taller.clientes.agregar_cliente(nombre, telefono)
+                cliente_id = taller.clientes.agregar_cliente(nombre, telefono, nit)
                 if cliente_id is None:
                     continue
                 
@@ -1430,7 +1610,7 @@ def menu_principal():
                 while True:
                     print(f"\n🚗 AGREGAR VEHÍCULO PARA {nombre}")
                     marca = input("Marca del vehículo: ").strip()
-                    modelo = input("Modelo del vehículo: ").strip()
+                    modelo = input("Línea del vehículo: ").strip()
                     
                     año = taller.pedir_numero_con_reintentos("Año del vehículo: ", "entero")
                     if año is None:
@@ -1578,7 +1758,7 @@ def menu_principal():
                     print(f"\n📋 DETALLES DEL CLIENTE:")
                     print(f"   👤 Nombre: {cliente_info[0]}")
                     print(f"   📞 Teléfono: {cliente_info[1] or 'No tiene'}")
-                    print(f"   📅 Fecha registro: {cliente_info[2]}")
+                    print(f"   🏢 NIT: {cliente_info[2] or 'No tiene'}")
                     
                     if vehiculos:
                         print(f"\n🚗 VEHÍCULOS ({len(vehiculos)}):")
@@ -1607,7 +1787,7 @@ def menu_principal():
                     print(f"   🚗 Vehículo: {vehiculo_info[0]} {vehiculo_info[1]} {vehiculo_info[2]}")
                     print(f"   🏷️  Placa: {vehiculo_info[3]}")
                     print(f"   🎨 Color: {vehiculo_info[4] or 'No especificado'}")
-                    print(f"   👤 Cliente: {vehiculo_info[5]} - 📞 {vehiculo_info[6] or 'No tiene'}")
+                    print(f"   👤 Cliente: {vehiculo_info[5]} - 📞 {vehiculo_info[6] or 'No tiene'} - 🏢 {vehiculo_info[7] or 'No tiene'}")
                     
                     if ordenes:
                         print(f"\n🔧 HISTORIAL DE ÓRDENES ({len(ordenes)}):")
@@ -1637,7 +1817,7 @@ def menu_principal():
                     print(f"\n📋 DETALLES DE ORDEN #{detalles['id']}:")
                     print(f"   🚗 Vehículo: {detalles['vehiculo_marca']} {detalles['vehiculo_modelo']} {detalles['vehiculo_año']}")
                     print(f"   🏷️  Placa: {detalles['vehiculo_placa']}")
-                    print(f"   👤 Cliente: {detalles['cliente_nombre']} - 📞 {detalles['cliente_telefono'] or 'No tiene'}")
+                    print(f"   👤 Cliente: {detalles['cliente_nombre']} - 📞 {detalles['cliente_telefono'] or 'No tiene'} - 🏢 {detalles['cliente_nit'] or 'No tiene'}")
                     print(f"   👷 Empleado: {detalles['empleado_nombre'] or 'No asignado'}")
                     print(f"   📅 Fechas: {detalles['fecha_inicio']} a {detalles['fecha_fin']}")
                     print(f"   🔧 Tipo servicio: {detalles['tipo_servicio']}")
@@ -1663,13 +1843,14 @@ def menu_principal():
                     continue
                 
                 nuevo_telefono = taller.pedir_telefono_con_reintentos("Nuevo teléfono (opcional): ", obligatorio=False)
+                nuevo_nit = taller.pedir_nit_con_reintentos("Nuevo NIT (opcional): ", obligatorio=False)
                 
-                resultado = taller.clientes.editar_cliente(cliente_id, nuevo_nombre, nuevo_telefono)
+                resultado = taller.clientes.editar_cliente(cliente_id, nuevo_nombre, nuevo_telefono, nuevo_nit)
                 print(resultado)
 
             elif opcion == "9":
                 # Opción 9: Editar Empleado
-                print("\n✏️ EDITAR EMPLEADO")
+                print("\n✏️ EDITAR EMPLEado")
                 empleado_id = taller.pedir_numero_con_reintentos("ID del empleado a editar: ", "entero")
                 if empleado_id is None:
                     continue
@@ -1770,7 +1951,7 @@ def menu_principal():
                 else:
                     print("❌ Opción de reporte no válida.")
 
-            # OPCIONES 12-14 (las que ya tienes implementadas)
+            # OPCIONES 12-14
             elif opcion == "12":
                 taller.menu_recordatorios_inteligentes()
             
