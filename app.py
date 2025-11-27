@@ -521,7 +521,7 @@ class OrdenManager:
                   kilometraje, unidad_kilometraje, fecha_fin_validada))
             
             self.db.commit()
-            mensaje = f"✅ Orden #{numero_orden} agregada - Total: ${precio_final}"
+            mensaje = f"✅ Orden #{numero_orden} agregada - Total: Q{precio_final}"
             print(mensaje)
             return mensaje
         except sqlite3.IntegrityError as e:
@@ -750,7 +750,7 @@ class ReportManager:
             plt.title('Ingresos Mensuales', fontsize=14, fontweight='bold')
             
         plt.xlabel('Mes')
-        plt.ylabel('Ingresos ($)')
+        plt.ylabel('Ingresos (Q)')
         plt.xticks(rotation=45)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -780,7 +780,7 @@ class ReportManager:
         
         plt.title('Proyección de Crecimiento', fontsize=14, fontweight='bold')
         plt.xlabel('Mes')
-        plt.ylabel('Ingresos ($)')
+        plt.ylabel('Ingresos (Q)')
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.xticks(rotation=45)
@@ -1350,14 +1350,14 @@ def mostrar_reporte(reporte: Dict, taller):
     """Muestra un reporte formateado"""
     print(f"\n📊 REPORTE {reporte['periodo'].upper()}")
     print(f"   📅 Período: {reporte['fecha_inicio']} al {datetime.now().date()}")
-    print(f"   💰 Ganancias totales: ${reporte['ganancias']:.2f}")
+    print(f"   💰 Ganancias totales: Q{reporte['ganancias']:.2f}")
     print(f"   ⏱️  Horas trabajadas: {reporte['horas_trabajadas']:.1f}")
     print(f"   🔧 Trabajos completados: {reporte['trabajos_completados']}")
     
     if reporte['servicios_populares']:
         print(f"\n   🏆 SERVICIOS MÁS POPULARES:")
         for servicio, cantidad, total in reporte['servicios_populares']:
-            print(f"      • {servicio}: {cantidad} trabajos (${total:.2f})")
+            print(f"      • {servicio}: {cantidad} trabajos (Q{total:.2f})")
     
     # Generar gráfica si hay datos
     if reporte['servicios_populares'] and input("\n¿Generar gráfica? (s/n): ").lower() == 's':
@@ -1510,11 +1510,11 @@ def menu_principal():
                 if horas is None:
                     continue
                 
-                costo_repuestos = taller.pedir_numero_con_reintentos("Costo de repuestos ($): ", "decimal")
+                costo_repuestos = taller.pedir_numero_con_reintentos("Costo de repuestos (Q): ", "decimal")
                 if costo_repuestos is None:
                     continue
                 
-                costo_mano_obra = taller.pedir_numero_con_reintentos("Costo de mano de obra ($): ", "decimal")
+                costo_mano_obra = taller.pedir_numero_con_reintentos("Costo de mano de obra (Q): ", "decimal")
                 if costo_mano_obra is None:
                     continue
                 
@@ -1541,7 +1541,7 @@ def menu_principal():
                     continue
                 
                 marca = input("Marca del vehículo: ").strip()
-                modelo = input("Modelo del vehículo: ").strip()
+                modelo = input("Línea del vehículo: ").strip()
                 
                 año = taller.pedir_numero_con_reintentos("Año del vehículo: ", "entero")
                 if año is None:
@@ -1615,7 +1615,7 @@ def menu_principal():
                             print(f"\n   📋 Orden #{orden[0]}")
                             print(f"      📅 Fecha: {orden[1]} a {orden[2] or 'En progreso'}")
                             print(f"      🔧 Servicio: {orden[4]}")
-                            print(f"      💰 Precio: ${orden[5]:.2f}")
+                            print(f"      💰 Precio: Q{orden[5]:.2f}")
                             print(f"      🛣️  Kilometraje: {orden[6]} {orden[7]}")
                             print(f"      👷 Empleado: {orden[8] or 'No asignado'}")
                             print(f"      📝 Descripción: {orden[3]}")
@@ -1642,9 +1642,9 @@ def menu_principal():
                     print(f"   📅 Fechas: {detalles['fecha_inicio']} a {detalles['fecha_fin']}")
                     print(f"   🔧 Tipo servicio: {detalles['tipo_servicio']}")
                     print(f"   ⏱️  Horas trabajadas: {detalles['horas_trabajadas']}")
-                    print(f"   💰 Costo repuestos: ${detalles['costo_repuestos']:.2f}")
-                    print(f"   💰 Costo mano obra: ${detalles['costo_mano_obra']:.2f}")
-                    print(f"   💰 Precio final: ${detalles['precio_final']:.2f}")
+                    print(f"   💰 Costo repuestos: Q{detalles['costo_repuestos']:.2f}")
+                    print(f"   💰 Costo mano obra: Q{detalles['costo_mano_obra']:.2f}")
+                    print(f"   💰 Precio final: Q{detalles['precio_final']:.2f}")
                     print(f"   🛣️  Kilometraje: {detalles['kilometraje']} {detalles['unidad_kilometraje']}")
                     print(f"   📝 Descripción: {detalles['descripcion_trabajo']}")
                 else:
@@ -1706,7 +1706,7 @@ def menu_principal():
                     print("❌ La descripción no puede estar vacía.")
                     continue
                 
-                nuevo_precio = taller.pedir_numero_con_reintentos("Nuevo precio final ($): ", "decimal")
+                nuevo_precio = taller.pedir_numero_con_reintentos("Nuevo precio final (Q): ", "decimal")
                 if nuevo_precio is None:
                     continue
                 
@@ -1755,7 +1755,7 @@ def menu_principal():
                         print(f"   📊 Crecimiento promedio: {proyeccion['crecimiento_promedio']*100:.1f}% mensual")
                         print(f"\n   🔮 PROYECCIONES PRÓXIMOS 6 MESES:")
                         for mes, ingreso in proyeccion['proyecciones']:
-                            print(f"      {mes}: ${ingreso:.2f}")
+                            print(f"      {mes}: Q{ingreso:.2f}")
                         
                         if input("\n¿Generar gráfica? (s/n): ").lower() == 's':
                             taller.reportes.crear_grafica_proyeccion(proyeccion, f"proyeccion_crecimiento_{datetime.now().strftime('%Y%m%d')}")
@@ -1766,7 +1766,7 @@ def menu_principal():
                     print(f"\n🎯 PREDICCIÓN DE ALTA DEMANDA:")
                     print(f"   📅 MESES CON MAYOR DEMANDA HISTÓRICA:")
                     for i, mes_data in enumerate(prediccion['meses_alta_demanda'], 1):
-                        print(f"      {i}. {mes_data['mes']}: {mes_data['trabajos']} trabajos (${mes_data['precio_promedio']:.2f} promedio)")
+                        print(f"      {i}. {mes_data['mes']}: {mes_data['trabajos']} trabajos (Q{mes_data['precio_promedio']:.2f} promedio)")
                 else:
                     print("❌ Opción de reporte no válida.")
 
