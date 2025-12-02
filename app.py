@@ -1506,7 +1506,7 @@ class TallerSEYMO:
         return None
 
     # ==========================================================================
-    # MÉTODOS PARA EL SISTEMA INTELIGENTE DE RECORDATORIOS
+    # MÉTODOS PARA EL SISTEMA DE RECORDATORIOS
     # ==========================================================================
     
     def menu_recordatorios_inteligentes(self):
