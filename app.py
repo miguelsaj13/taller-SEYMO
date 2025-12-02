@@ -1,75 +1,119 @@
-import sqlite3
-import os
-from datetime import datetime, timedelta
-import pandas as pd
-from collections import Counter
-import matplotlib.pyplot as plt
-from typing import Optional, Dict, List, Tuple
-import warnings
-import sys
+# ============================================================================
+# TALLER SEYMO - SISTEMA DE GESTIÓN PARA TALLER MECÁNICO
+# Proyecto personal
+# Autor: Miguel Sajquín
+# Fecha: 2025
+# ============================================================================
 
-# SOLUCIÓN DEFINITIVA AL DEPRECATIONWARNING
+# Importación de bibliotecas necesarias
+# Nota: Algunas de estas bibliotecas las aprendí en clase, otras las investigué
+import sqlite3  # Para trabajar con bases de datos (SQLite es fácil para empezar)
+import os  # Para manejar archivos y carpetas del sistema
+from datetime import datetime, timedelta  # Para manejar fechas y tiempos
+import pandas as pd  # Para análisis de datos (la vi en matemáticas aplicadas)
+from collections import Counter  # Para contar elementos en listas
+import matplotlib.pyplot as plt  # Para crear gráficas (aprendí en el curso de métodos numéricos)
+from typing import Optional, Dict, List, Tuple  # Para dar tipos a las variables (nuevo para mí)
+import warnings  # Para manejar advertencias
+import sys  # Para controlar el sistema
+
+# Esto es para evitar advertencias molestas que aparecían
+# El profesor dijo que está bien usar esto en proyectos pequeños
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
-# CREAR CARPETAS PRIMERO, ANTES de cualquier otra cosa
+# ============================================================================
+# FUNCIÓN PARA CREAR CARPETAS
+# Esto lo hice porque al principio el programa fallaba si no existían las carpetas
+# ============================================================================
 def crear_estructura_carpetas():
     """Crea todas las carpetas necesarias antes de iniciar el sistema"""
     try:
+        # Defino las carpetas que necesito
+        # 'database' para la base de datos
+        # 'database/backups' para copias de seguridad (por si algo sale mal)
+        # 'reportes' para guardar las gráficas que genere el sistema
         carpetas = ['database', 'database/backups', 'reportes']
+        
+        # Recorro cada carpeta
         for carpeta in carpetas:
+            # Si la carpeta no existe, la creo
             if not os.path.exists(carpeta):
-                os.makedirs(carpeta)
+                os.makedirs(carpeta)  # makedirs crea carpetas y subcarpetas
                 print(f"✅ Carpeta '{carpeta}' creada")
-        return True
+        return True  # Si todo sale bien, retorno True
     except Exception as e:
+        # Si hay algún error, muestro mensaje y retorno False
         print(f"❌ Error crítico creando carpetas: {e}")
         return False
 
-# Ejecutar esto inmediatamente al importar
-if not crear_estructura_carpetas():
-    print("❌ No se pudo crear la estructura de carpetas. Saliendo...")
-    sys.exit(1)
+# ============================================================================
+# INICIALIZACIÓN DEL SISTEMA
+# Esto se ejecuta apenas se importa el archivo
+# ============================================================================
 
-# Intentar importar seaborn (opcional)
+# Primero creo las carpetas necesarias
+if not crear_estructura_carpetas():
+    # Si no se pueden crear las carpetas, el programa no puede continuar
+    print("❌ No se pudo crear la estructura de carpetas. Saliendo...")
+    sys.exit(1)  # Salgo del programa con código de error 1
+
+# Intento importar seaborn para gráficas más bonitas
+# Seaborn no es obligatorio, pero si está disponible, la uso
 try:
-    import seaborn as sns
-    SEABORN_AVAILABLE = True
+    import seaborn as sns  # Seaborn hace gráficas más profesionales
+    SEABORN_AVAILABLE = True  # Variable para saber si seaborn está disponible
     print("✅ seaborn cargado correctamente")
 except ImportError:
+    # Si seaborn no está instalado, uso matplotlib normal
     SEABORN_AVAILABLE = False
     print("⚠️  seaborn no está disponible. Usando estilos básicos de matplotlib.")
 
 print("✅ Estructura de carpetas configurada correctamente")
 
+# ============================================================================
+# CLASE DATABASEMANAGER
+# Esta clase maneja todo lo relacionado con la base de datos
+# La hice siguiendo el patrón que vimos en clase: una clase por responsabilidad
+# ============================================================================
 class DatabaseManager:
     """Maneja la conexión y operaciones básicas de la base de datos"""
     
     def __init__(self, db_path: str = 'database/taller.db'):
+        # Inicializo la ruta de la base de datos
+        # Por defecto usa 'database/taller.db'
         self.db_path = db_path
-        self.conn = None
-        self._initialize_database()
+        self.conn = None  # La conexión empieza como None
+        self._initialize_database()  # Llamo al método de inicialización
     
     def _initialize_database(self):
         """Inicializa la base de datos con manejo robusto de errores"""
         try:
+            # Creo la conexión a la base de datos
             self.conn = self._create_connection()
             if self.conn is not None:
+                # Si la conexión se creó, creo las tablas
                 self.create_tables()
                 print("✅ Base de datos inicializada correctamente")
             else:
+                # Si no se pudo crear, lanzo un error
                 raise sqlite3.Error("No se pudo crear la conexión")
         except sqlite3.Error as e:
+            # Capturo cualquier error y muestro mensaje
             print(f"❌ Error inicializando base de datos: {e}")
-            raise
+            raise  # Vuelvo a lanzar el error para que lo maneje el código que llamó
     
     def _create_connection(self):
         """Crea conexión a la base de datos con manejo de errores"""
         try:
+            # Creo la conexión con SQLite
+            # check_same_thread=False permite usar la conexión desde varios hilos
+            # detect_types ayuda a manejar tipos de datos como fechas
             conn = sqlite3.connect(
                 self.db_path, 
                 check_same_thread=False,
                 detect_types=sqlite3.PARSE_DECLTYPES
             )
+            # Activo las foreign keys (relaciones entre tablas)
             conn.execute("PRAGMA foreign_keys = ON")
             return conn
         except sqlite3.Error as e:
@@ -78,13 +122,16 @@ class DatabaseManager:
     
     def create_tables(self):
         """Crea todas las tablas necesarias"""
+        # Verifico que haya conexión
         if self.conn is None:
             raise sqlite3.Error("No hay conexión a la base de datos")
         
-        cursor = self.conn.cursor()
+        cursor = self.conn.cursor()  # Creo un cursor para ejecutar comandos SQL
         
         try:
-            # Tabla clientes (SIN fecha_registro, CON nit)
+            # Tabla clientes - almacena información de los clientes del taller
+            # AUTOINCREMENT hace que el ID se genere automáticamente
+            # UNIQUE asegura que no haya duplicados en teléfono y NIT
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS clientes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,7 +141,8 @@ class DatabaseManager:
                 )
             ''')
             
-            # Tabla vehículos
+            # Tabla vehículos - almacena los vehículos de cada cliente
+            # FOREIGN KEY relaciona con la tabla clientes
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS vehiculos (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,7 +158,7 @@ class DatabaseManager:
                 )
             ''')
             
-            # Tabla empleados
+            # Tabla empleados - información de los mecánicos del taller
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS empleados (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,7 +167,8 @@ class DatabaseManager:
                 )
             ''')
             
-            # Tabla órdenes de trabajo
+            # Tabla órdenes de trabajo - registro de todos los trabajos realizados
+            # Aquí es donde se guarda la información de cada servicio
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ordenes_trabajo (
                     id INTEGER PRIMARY KEY,
@@ -140,13 +189,15 @@ class DatabaseManager:
                 )
             ''')
             
-            # Verificar y agregar columnas faltantes si es necesario
+            # Verifico si necesito actualizar las tablas
+            # Esto es útil cuando cambio la estructura de la base de datos
             self._verificar_y_actualizar_tablas()
             
-            self.conn.commit()
+            self.conn.commit()  # Guardo los cambios en la base de datos
             print("✅ Tablas creadas/verificadas correctamente")
             
         except sqlite3.Error as e:
+            # Si hay error, deshago los cambios
             self.conn.rollback()
             print(f"❌ Error creando tablas: {e}")
             raise
@@ -158,22 +209,25 @@ class DatabaseManager:
         try:
             print("🔄 Verificando estructura de tablas...")
             
-            # VERIFICAR TABLA CLIENTES PRIMERO
+            # Verifico la tabla clientes
+            # PRAGMA table_info me dice qué columnas tiene una tabla
             cursor.execute("PRAGMA table_info(clientes)")
             columnas_clientes = [col[1] for col in cursor.fetchall()]
             print(f"📋 Columnas actuales en clientes: {columnas_clientes}")
             
-            # Agregar columna nit si no existe
+            # Si la columna 'nit' no existe, la agrego
+            # Esto pasó cuando agregué el campo NIT después de crear la base de datos
             if 'nit' not in columnas_clientes:
                 print("🔄 Agregando columna 'nit' a tabla clientes...")
                 cursor.execute('ALTER TABLE clientes ADD COLUMN nit TEXT UNIQUE')
                 print("✅ Columna 'nit' agregada a clientes")
             
-            # VERIFICAR TABLA VEHÍCULOS
+            # Verifico la tabla vehículos
             cursor.execute("PRAGMA table_info(vehiculos)")
             columnas_vehiculos = [col[1] for col in cursor.fetchall()]
             print(f"📋 Columnas actuales en vehiculos: {columnas_vehiculos}")
             
+            # Agrego columnas si no existen
             if 'proximo_mantenimiento' not in columnas_vehiculos:
                 print("🔄 Agregando columna 'proximo_mantenimiento' a vehiculos...")
                 cursor.execute('ALTER TABLE vehiculos ADD COLUMN proximo_mantenimiento DATE')
@@ -193,34 +247,38 @@ class DatabaseManager:
     
     def execute_query(self, query: str, params: tuple = ()) -> sqlite3.Cursor:
         """Ejecuta una consulta y retorna el cursor"""
+        # Método simple para ejecutar consultas SQL
         cursor = self.conn.cursor()
         cursor.execute(query, params)
         return cursor
     
     def commit(self):
         """Realiza commit"""
+        # Método para guardar cambios en la base de datos
         self.conn.commit()
 
     def diagnosticar_estructura_bd(self):
         """Diagnostica la estructura actual de la base de datos"""
+        # Este método me ayuda a ver qué tablas y columnas tengo
+        # Es útil para depurar problemas
         cursor = self.conn.cursor()
         
         try:
             print("\n🔍 DIAGNÓSTICO DE ESTRUCTURA DE BD")
             
-            # Verificar tabla clientes
+            # Muestro información de la tabla clientes
             cursor.execute("PRAGMA table_info(clientes)")
             columnas = cursor.fetchall()
             print("\n📋 TABLA CLIENTES:")
             for col in columnas:
-                print(f"   - {col[1]} ({col[2]})")
+                print(f"   - {col[1]} ({col[2]})")  # Nombre de columna y tipo
             
-            # Verificar datos existentes
+            # Cuento cuántos clientes hay
             cursor.execute("SELECT COUNT(*) FROM clientes")
             total_clientes = cursor.fetchone()[0]
             print(f"   Total de clientes: {total_clientes}")
             
-            # Verificar tabla vehiculos
+            # Muestro información de la tabla vehículos
             cursor.execute("PRAGMA table_info(vehiculos)")
             columnas_vehiculos = cursor.fetchall()
             print("\n📋 TABLA VEHICULOS:")
@@ -230,6 +288,11 @@ class DatabaseManager:
         except sqlite3.Error as e:
             print(f"❌ Error en diagnóstico: {e}")
 
+# ============================================================================
+# CLASE VALIDATOR
+# Esta clase se encarga de validar todos los datos que ingresan los usuarios
+# Aprendí que es importante validar para evitar errores y datos incorrectos
+# ============================================================================
 class Validator:
     """Maneja todas las validaciones de datos"""
     
@@ -237,15 +300,16 @@ class Validator:
     def validar_numero(valor: str, tipo: str = "entero") -> Optional[float]:
         """Valida que el valor sea un número válido"""
         try:
-            if not valor.strip():
+            if not valor.strip():  # Si el valor está vacío
                 return None
             if tipo == "entero":
-                return int(valor)
+                return int(valor)  # Convierto a entero
             elif tipo == "decimal":
-                return float(valor)
+                return float(valor)  # Convierto a decimal
             else:
                 return valor
         except ValueError:
+            # Si no se puede convertir a número, retorno None
             return None
     
     @staticmethod
@@ -254,8 +318,10 @@ class Validator:
         if telefono is None or telefono.strip() == "":
             return None
         
+        # Filtro solo los dígitos del teléfono
         telefono_limpio = ''.join(filter(str.isdigit, telefono))
         
+        # Verifico que tenga una longitud razonable
         if len(telefono_limpio) < 7 or len(telefono_limpio) > 15:
             return None
         
@@ -267,9 +333,10 @@ class Validator:
         if nit is None or nit.strip() == "":
             return None
         
-        # Permitir números, guiones, letras y espacios
+        # Filtro caracteres válidos: letras, números, guiones y espacios
         nit_limpio = ''.join(filter(lambda c: c.isalnum() or c in '- ', nit))
         
+        # Verifico longitud
         if len(nit_limpio) < 3 or len(nit_limpio) > 20:
             return None
         
@@ -282,15 +349,18 @@ class Validator:
             if not fecha_str.strip():
                 return None
                 
+            # Si el usuario ingresa un número, lo interpreto como días desde hoy
             if fecha_str.isdigit():
                 dias = int(fecha_str)
                 fecha = datetime.now() + timedelta(days=dias)
             else:
+                # Si ingresa una fecha en formato YYYY-MM-DD
                 fecha = datetime.strptime(fecha_str, '%Y-%m-%d')
             
             hoy = datetime.now().date()
             fecha_date = fecha.date()
             
+            # Validaciones de rango de fecha
             if fecha_date < datetime(2000, 1, 1).date():
                 print("❌ Error: La fecha no puede ser anterior al año 2000.")
                 return None
@@ -317,26 +387,35 @@ class Validator:
     def validar_año_vehiculo(año: int) -> bool:
         """Valida que el año del vehículo sea razonable"""
         año_actual = datetime.now().year
+        # Un vehículo no puede ser de antes de 1900 ni de más de 2 años en el futuro
         return 1900 <= año <= año_actual + 2
 
+# ============================================================================
+# CLASE CLIENTEMANAGER
+# Maneja todas las operaciones relacionadas con clientes
+# Usé el principio de responsabilidad única: cada clase hace una cosa
+# ============================================================================
 class ClienteManager:
     """Gestiona todas las operaciones relacionadas con clientes"""
     
     def __init__(self, db_manager: DatabaseManager, validator: Validator):
+        # Recibo las dependencias por constructor (inyección de dependencias)
         self.db = db_manager
         self.validator = validator
     
     def agregar_cliente(self, nombre: str, telefono: Optional[str] = None, nit: Optional[str] = None) -> Optional[int]:
         """Agrega un nuevo cliente a la base de datos"""
         try:
+            # Ejecuto la consulta INSERT para agregar el cliente
             cursor = self.db.execute_query(
                 'INSERT INTO clientes (nombre, telefono, nit) VALUES (?, ?, ?)', 
                 (nombre, telefono, nit)
             )
-            self.db.commit()
+            self.db.commit()  # Guardo los cambios
             print(f"✅ Cliente '{nombre}' agregado con ID: {cursor.lastrowid}")
-            return cursor.lastrowid
+            return cursor.lastrowid  # Retorno el ID del nuevo cliente
         except sqlite3.IntegrityError as e:
+            # Manejo errores de duplicados
             if "telefono" in str(e):
                 print("❌ Error: Ya existe un cliente con ese teléfono")
             elif "nit" in str(e):
@@ -347,20 +426,23 @@ class ClienteManager:
     
     def cliente_existe(self, cliente_id: int) -> bool:
         """Verifica si un cliente existe"""
+        # Consulta simple para verificar existencia
         cursor = self.db.execute_query('SELECT id FROM clientes WHERE id = ?', (cliente_id,))
         return cursor.fetchone() is not None
     
     def buscar_cliente_por_nombre(self, nombre_buscar: str) -> List[Tuple]:
         """Busca clientes por nombre"""
+        # Uso LIKE para búsqueda parcial (contiene el texto)
         cursor = self.db.execute_query(
             'SELECT id, nombre, telefono, nit FROM clientes WHERE nombre LIKE ? ORDER BY nombre',
-            (f'%{nombre_buscar}%',)
+            (f'%{nombre_buscar}%',)  # % significa "cualquier texto antes/después"
         )
         return cursor.fetchall()
     
     def editar_cliente(self, cliente_id: int, nuevo_nombre: str, nuevo_telefono: Optional[str], nuevo_nit: Optional[str]) -> str:
         """Edita la información de un cliente"""
         try:
+            # Consulta UPDATE para modificar el cliente
             self.db.execute_query(
                 'UPDATE clientes SET nombre = ?, telefono = ?, nit = ? WHERE id = ?',
                 (nuevo_nombre, nuevo_telefono, nuevo_nit, cliente_id)
@@ -369,6 +451,7 @@ class ClienteManager:
             print(f"✅ Cliente ID {cliente_id} actualizado")
             return f"✅ Cliente ID {cliente_id} actualizado"
         except sqlite3.IntegrityError as e:
+            # Manejo errores de duplicados
             if "telefono" in str(e):
                 return "❌ Error: Ya existe un cliente con ese teléfono"
             elif "nit" in str(e):
@@ -381,18 +464,21 @@ class ClienteManager:
         if not self.cliente_existe(cliente_id):
             return None
         
+        # Obtengo información básica del cliente
         cursor = self.db.execute_query(
             'SELECT nombre, telefono, nit FROM clientes WHERE id = ?', 
             (cliente_id,)
         )
         cliente_info = cursor.fetchone()
         
+        # Obtengo todos los vehículos del cliente
         cursor = self.db.execute_query(
             'SELECT id, marca, modelo, año, placa, color FROM vehiculos WHERE cliente_id = ?',
             (cliente_id,)
         )
         vehiculos = cursor.fetchall()
         
+        # Retorno un diccionario con toda la información
         return {
             'cliente': cliente_info,
             'vehiculos': vehiculos
@@ -405,6 +491,10 @@ class ClienteManager:
         cursor = self.db.execute_query('SELECT id FROM clientes WHERE nit = ?', (nit,))
         return cursor.fetchone() is not None
 
+# ============================================================================
+# CLASE VEHICULOMANAGER
+# Maneja operaciones relacionadas con vehículos
+# ============================================================================
 class VehiculoManager:
     """Gestiona todas las operaciones relacionadas con vehículos"""
     
@@ -450,6 +540,7 @@ class VehiculoManager:
         if not self.vehiculo_existe(vehiculo_id):
             return None
         
+        # Obtengo información del vehículo y su dueño
         cursor = self.db.execute_query('''
             SELECT v.marca, v.modelo, v.año, v.placa, v.color, c.nombre, c.telefono, c.nit
             FROM vehiculos v
@@ -458,6 +549,7 @@ class VehiculoManager:
         ''', (vehiculo_id,))
         vehiculo_info = cursor.fetchone()
         
+        # Obtengo el historial de órdenes de este vehículo
         cursor = self.db.execute_query('''
             SELECT o.id, o.fecha_inicio, o.fecha_fin, o.descripcion_trabajo, 
                    o.tipo_servicio, o.precio_final, o.kilometraje, o.unidad_kilometraje,
@@ -474,6 +566,10 @@ class VehiculoManager:
             'ordenes': ordenes
         }
 
+# ============================================================================
+# CLASE EMPLEADOMANAGER
+# Maneja operaciones relacionadas con empleados
+# ============================================================================
 class EmpleadoManager:
     """Gestiona todas las operaciones relacionadas con empleados"""
     
@@ -518,6 +614,11 @@ class EmpleadoManager:
         except sqlite3.IntegrityError:
             return "❌ Error: Ya existe un empleado con ese teléfono"
 
+# ============================================================================
+# CLASE ORDENMANAGER
+# Maneja operaciones relacionadas con órdenes de trabajo
+# Aquí es donde se guarda la información de los servicios realizados
+# ============================================================================
 class OrdenManager:
     """Gestiona todas las operaciones relacionadas con órdenes de trabajo"""
     
@@ -535,6 +636,7 @@ class OrdenManager:
         if not self.orden_existe(orden_id):
             return None
         
+        # Consulta compleja que junta información de varias tablas
         cursor = self.db.execute_query('''
             SELECT 
                 o.id, o.fecha_inicio, o.fecha_fin, o.descripcion_trabajo, 
@@ -555,6 +657,7 @@ class OrdenManager:
         if not orden_info:
             return None
         
+        # Organizo toda la información en un diccionario
         return {
             'id': orden_info[0],
             'fecha_inicio': orden_info[1],
@@ -583,17 +686,21 @@ class OrdenManager:
                      unidad_kilometraje: str = 'km', fecha_fin: Optional[str] = None) -> str:
         """Agrega una nueva orden de trabajo"""
         
+        # Valido la fecha de finalización
         fecha_fin_validada = None
         if fecha_fin:
             fecha_fin_validada = self.validator.validar_fecha(fecha_fin, permitir_futuro=True, permitir_pasado=True)
             if fecha_fin_validada is None:
                 return "❌ Error: Fecha de finalización inválida."
         else:
+            # Si no se especifica fecha, uso la actual
             fecha_fin_validada = datetime.now().date()
         
+        # Calculo el precio final (repuestos + mano de obra)
         precio_final = costo_repuestos + costo_mano_obra
         
         try:
+            # Inserto la nueva orden
             self.db.execute_query('''
                 INSERT INTO ordenes_trabajo 
                 (id, vehiculo_id, empleado_id, descripcion_trabajo, tipo_servicio,
@@ -627,6 +734,11 @@ class OrdenManager:
         except Exception as e:
             return f"❌ Error al editar orden: {e}"
 
+# ============================================================================
+# CLASE REPORTMANAGER
+# Maneja la generación de reportes y gráficas
+# Esta es la parte más interesante del proyecto, donde uso análisis de datos
+# ============================================================================
 class ReportManager:
     """Gestiona la generación de reportes y gráficas"""
     
@@ -635,6 +747,7 @@ class ReportManager:
     
     def reporte_periodo(self, periodo: str = 'semana') -> Dict:
         """Genera reportes del período especificado"""
+        # Determino la fecha de inicio según el período
         if periodo == 'semana':
             fecha_inicio = datetime.now() - timedelta(days=datetime.now().weekday())
         elif periodo == 'mes':
@@ -642,6 +755,7 @@ class ReportManager:
         else:  # 'año'
             fecha_inicio = datetime.now().replace(month=1, day=1)
         
+        # Obtengo estadísticas básicas
         cursor = self.db.execute_query('''
             SELECT SUM(precio_final), SUM(horas_trabajadas), COUNT(*)
             FROM ordenes_trabajo 
@@ -650,6 +764,7 @@ class ReportManager:
         
         ganancias, horas, trabajos = cursor.fetchone()
         
+        # Obtengo los servicios más populares
         cursor = self.db.execute_query('''
             SELECT tipo_servicio, COUNT(*), SUM(precio_final)
             FROM ordenes_trabajo 
@@ -661,6 +776,7 @@ class ReportManager:
         
         servicios_populares = cursor.fetchall()
         
+        # Retorno todo en un diccionario
         return {
             'ganancias': ganancias or 0,
             'horas_trabajadas': horas or 0,
@@ -672,6 +788,7 @@ class ReportManager:
     
     def reporte_periodo_historico(self, año: int, periodo: str = 'año') -> Dict:
         """Genera reportes para años pasados"""
+        # Similar al anterior, pero para períodos históricos
         if periodo == 'año':
             fecha_inicio = datetime(año, 1, 1)
             fecha_fin = datetime(año, 12, 31)
@@ -715,8 +832,10 @@ class ReportManager:
     
     def proyeccion_crecimiento(self) -> Optional[Dict]:
         """Genera proyecciones de crecimiento basadas en datos históricos"""
+        # Este es el método más avanzado, usa análisis de tendencias
         fecha_inicio = datetime.now().replace(day=1) - timedelta(days=365)
         
+        # Obtengo datos mensuales
         cursor = self.db.execute_query('''
             SELECT strftime('%Y-%m', fecha_fin) as mes, 
                    SUM(precio_final) as ingresos,
@@ -729,20 +848,22 @@ class ReportManager:
         
         datos_mensuales = cursor.fetchall()
         
+        # Necesito al menos 3 meses de datos para hacer proyecciones
         if len(datos_mensuales) < 3:
             return None
         
-        # Calcular crecimiento promedio
+        # Calculo el crecimiento promedio
         ingresos = [d[1] for d in datos_mensuales]
         crecimiento_promedio = sum((ingresos[i] - ingresos[i-1]) / ingresos[i-1] 
                                  for i in range(1, len(ingresos))) / (len(ingresos) - 1)
         
-        # Proyección para los próximos 6 meses
+        # Proyecto para los próximos 6 meses
         ultimo_ingreso = ingresos[-1]
         proyecciones = []
         
         for i in range(1, 7):
             mes_proyectado = (datetime.now() + timedelta(days=30*i)).strftime('%Y-%m')
+            # Fórmula de crecimiento compuesto
             ingreso_proyectado = ultimo_ingreso * (1 + crecimiento_promedio) ** i
             proyecciones.append((mes_proyectado, ingreso_proyectado))
         
@@ -754,6 +875,7 @@ class ReportManager:
     
     def predecir_alta_demanda(self) -> Dict:
         """Predice períodos de alta demanda basado en patrones históricos"""
+        # Analizo en qué meses hay más trabajo históricamente
         cursor = self.db.execute_query('''
             SELECT strftime('%m', fecha_fin) as mes, 
                    COUNT(*) as cantidad_trabajos,
@@ -765,7 +887,7 @@ class ReportManager:
         
         datos_mensuales = cursor.fetchall()
         
-        # Encontrar meses con mayor demanda
+        # Identifico los 3 meses con mayor demanda
         meses_alta_demanda = []
         for mes, cantidad, precio in datos_mensuales[:3]:
             nombre_mes = self._obtener_nombre_mes(int(mes))
@@ -794,11 +916,14 @@ class ReportManager:
             print("❌ No hay datos para generar la gráfica")
             return
         
+        # Extraigo datos para la gráfica
         servicios = [s[0] for s in reporte['servicios_populares']]
         cantidades = [s[1] for s in reporte['servicios_populares']]
         
+        # Creo la figura
         plt.figure(figsize=(10, 6))
         
+        # Uso seaborn si está disponible (hace gráficas más bonitas)
         if SEABORN_AVAILABLE:
             sns.barplot(x=cantidades, y=servicios, palette='viridis')
             plt.title('Servicios Más Solicitados', fontsize=14, fontweight='bold')
@@ -809,6 +934,7 @@ class ReportManager:
         plt.xlabel('Cantidad de Trabajos')
         plt.tight_layout()
         
+        # Guardo la gráfica en un archivo
         archivo_path = f'reportes/{nombre_archivo}.png'
         plt.savefig(archivo_path, dpi=300, bbox_inches='tight')
         plt.close()
@@ -834,7 +960,7 @@ class ReportManager:
             plt.title('Ingresos Mensuales', fontsize=14, fontweight='bold')
             
         plt.xlabel('Mes')
-        plt.ylabel('Ingresos (Q)')
+        plt.ylabel('Ingresos (Q)')  # Q es Quetzales (moneda de Guatemala)
         plt.xticks(rotation=45)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -847,6 +973,7 @@ class ReportManager:
     
     def crear_grafica_proyeccion(self, proyeccion: Dict, nombre_archivo: str):
         """Crea gráfica de proyección de crecimiento"""
+        # Separo datos históricos y proyecciones
         meses_historicos = [d[0] for d in proyeccion['datos_historicos']]
         ingresos_historicos = [d[1] for d in proyeccion['datos_historicos']]
         
@@ -876,6 +1003,11 @@ class ReportManager:
         
         print(f"✅ Gráfica guardada: {archivo_path}")
 
+# ============================================================================
+# CLASE RECORDATORIOSINTELIGENTES
+# Esta es la parte más avanzada del sistema
+# Usa análisis de datos para predecir cuándo los vehículos necesitarán mantenimiento
+# ============================================================================
 class RecordatoriosInteligentes:
     """Sistema inteligente que predice mantenimiento basado en historial de servicios"""
     
@@ -893,6 +1025,7 @@ class RecordatoriosInteligentes:
     
     def calcular_promedio_entre_servicios(self, tipo_servicio: str) -> Dict:
         """Calcula el promedio de tiempo entre servicios para un tipo específico"""
+        # Uso la función LAG de SQL para comparar servicios consecutivos
         cursor = self.db.execute_query('''
             SELECT o.vehiculo_id, o.fecha_fin, o.kilometraje,
                    LAG(o.fecha_fin) OVER (PARTITION BY o.vehiculo_id ORDER BY o.fecha_fin) as fecha_anterior,
@@ -907,6 +1040,7 @@ class RecordatoriosInteligentes:
         if not datos:
             return {'dias_promedio': 0, 'km_promedio': 0, 'total_vehiculos': 0, 'total_servicios': 0}
         
+        # Calculo diferencias entre servicios consecutivos
         diferencias_dias = []
         diferencias_km = []
         vehiculos_analizados = set()
@@ -915,8 +1049,8 @@ class RecordatoriosInteligentes:
         for i in range(1, len(datos)):
             vehiculo_actual, fecha_actual, km_actual, fecha_anterior, km_anterior = datos[i]
             
-            if fecha_anterior and km_anterior:  # Solo si hay servicio anterior
-                # CORRECCIÓN: Manejar diferentes tipos de fecha
+            if fecha_anterior and km_anterior: 
+                # Manejo diferentes formatos de fecha (string vs date)
                 if isinstance(fecha_actual, str):
                     fecha_actual_dt = datetime.strptime(fecha_actual, '%Y-%m-%d')
                 else:
@@ -927,12 +1061,13 @@ class RecordatoriosInteligentes:
                 else:
                     fecha_anterior_dt = datetime.combine(fecha_anterior, datetime.min.time())
                 
-                # Calcular diferencia en días
+                # Calculo diferencia en días
                 dias_diferencia = (fecha_actual_dt - fecha_anterior_dt).days
                 
-                # Calcular diferencia en kilómetros
+                # Calculo diferencia en kilómetros
                 km_diferencia = km_actual - km_anterior
                 
+                # Solo considero diferencias positivas
                 if dias_diferencia > 0 and km_diferencia > 0:
                     diferencias_dias.append(dias_diferencia)
                     diferencias_km.append(km_diferencia)
@@ -961,24 +1096,23 @@ class RecordatoriosInteligentes:
         
         resultado = cursor.fetchone()
         
-        # CORRECCIÓN: Asegurar que la fecha esté en formato string
         if resultado:
             fecha, kilometraje = resultado
             if not isinstance(fecha, str):
-                fecha = fecha.strftime('%Y-%m-%d')  # Convertir date a string
+                fecha = fecha.strftime('%Y-%m-%d')  # Convierto a string si es date
             return (fecha, kilometraje)
         
         return None
     
     def predecir_proximo_servicio(self, tipo_servicio: str, margen_dias: int = 30) -> List[Dict]:
         """Predice qué vehículos necesitarán pronto un servicio específico"""
-        # Obtener estadísticas del servicio
+        # Obtengo estadísticas del servicio
         estadisticas = self.calcular_promedio_entre_servicios(tipo_servicio)
         
         if estadisticas['total_servicios'] == 0:
             return []
         
-        # Obtener todos los vehículos que han tenido este servicio
+        # Obtengo todos los vehículos que han tenido este servicio
         cursor = self.db.execute_query('''
             SELECT DISTINCT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono, c.nit
             FROM vehiculos v
@@ -993,24 +1127,24 @@ class RecordatoriosInteligentes:
         for vehiculo in vehiculos:
             vehiculo_id, marca, modelo, placa, cliente, telefono, nit = vehiculo
             
-            # Obtener último servicio de este tipo
+            # Obtengo último servicio de este tipo
             ultimo_servicio = self.obtener_ultimo_servicio_vehiculo(vehiculo_id, tipo_servicio)
             
             if ultimo_servicio:
                 fecha_ultimo, km_ultimo = ultimo_servicio
                 
-                # CORRECCIÓN: Manejar tanto strings como objetos date
+                # Convierto fecha si es necesario
                 if isinstance(fecha_ultimo, str):
                     fecha_ultimo_dt = datetime.strptime(fecha_ultimo, '%Y-%m-%d')
                 else:
-                    # Si ya es un objeto date, convertirlo a datetime
                     fecha_ultimo_dt = datetime.combine(fecha_ultimo, datetime.min.time())
                 
-                # Calcular fecha estimada del próximo servicio
+                # Calculo fecha estimada del próximo servicio
+                # Usando el promedio histórico
                 fecha_estimada = fecha_ultimo_dt + timedelta(days=estadisticas['dias_promedio'])
                 km_estimado = km_ultimo + estadisticas['km_promedio']
                 
-                # Verificar si está próximo (dentro del margen de días)
+                # Verifico si está próximo (dentro del margen de días)
                 dias_restantes = (fecha_estimada - datetime.now()).days
                 
                 if dias_restantes <= margen_dias and dias_restantes >= 0:
@@ -1031,12 +1165,13 @@ class RecordatoriosInteligentes:
                         'km_promedio_historico': estadisticas['km_promedio']
                     })
         
-        # Ordenar por proximidad
+        # Ordeno por proximidad (menos días primero)
         resultados.sort(key=lambda x: x['dias_restantes'])
         return resultados
     
     def obtener_vehiculos_sin_servicio(self, tipo_servicio: str) -> List[Tuple]:
         """Obtiene vehículos que nunca han tenido este tipo de servicio"""
+        # Estos vehículos podrían necesitar su primer servicio
         cursor = self.db.execute_query('''
             SELECT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono, c.nit
             FROM vehiculos v
@@ -1052,6 +1187,7 @@ class RecordatoriosInteligentes:
     
     def analizar_patrones_todos_servicios(self) -> Dict:
         """Analiza patrones para todos los tipos de servicio disponibles"""
+        # Este método analiza todos los servicios de una vez
         tipos_servicio = self.obtener_tipos_servicio_disponibles()
         resultados = {}
         
@@ -1067,11 +1203,17 @@ class RecordatoriosInteligentes:
         
         return resultados
 
+# ============================================================================
+# CLASE TALLERSEYMO
+# Clase principal que coordina todas las funcionalidades
+# Esta es la clase que orquesta todo el sistema
+# ============================================================================
 class TallerSEYMO:
     """Clase principal que coordina todas las funcionalidades del taller"""
     
     def __init__(self):
         try:
+            # Inicializo todas las dependencias
             self.db = DatabaseManager()
             self.validator = Validator()
             self.clientes = ClienteManager(self.db, self.validator)
@@ -1081,12 +1223,13 @@ class TallerSEYMO:
             self.reportes = ReportManager(self.db)
             self.recordatorios = RecordatoriosInteligentes(self.db)
             
-            # Diagnosticar estructura al inicio
+            # Diagnóstico inicial
             self.db.diagnosticar_estructura_bd()
             
             print("✅ Sistema Taller SEYMO inicializado correctamente")
             
         except Exception as e:
+            # Si hay error al inicializar, intento recrear la base de datos
             print(f"❌ Error crítico iniciando el sistema: {e}")
             print("🔄 Intentando recrear base de datos...")
             self._recrear_base_datos()
@@ -1098,19 +1241,19 @@ class TallerSEYMO:
         
         db_path = 'database/taller.db'
         
-        # Cerrar conexión si existe
+        # Cierro conexión si existe
         if hasattr(self, 'db') and self.db.conn:
             self.db.conn.close()
         
-        # Eliminar archivo existente
+        # Elimino el archivo existente
         if os.path.exists(db_path):
             os.remove(db_path)
             print("🗑️ Base de datos anterior eliminada")
         
-        # Recrear carpetas
+        # Recreo carpetas
         crear_estructura_carpetas()
         
-        # Reintentar inicialización
+        # Reintento inicialización
         try:
             self.db = DatabaseManager()
             self.validator = Validator()
@@ -1127,6 +1270,11 @@ class TallerSEYMO:
             print(f"❌ Error fatal: No se pudo crear la base de datos: {e}")
             raise
 
+    # ==========================================================================
+    # MÉTODOS PARA INTERACCIÓN CON EL USUARIO
+    # Estos métodos manejan la entrada de datos con validación y reintentos
+    # ==========================================================================
+    
     def pedir_numero_con_reintentos(self, mensaje: str, tipo: str = "entero", intentos: int = 5) -> Optional[float]:
         """Pide un número al usuario con reintentos y mensajes de error claros"""
         for intento in range(intentos):
@@ -1234,10 +1382,12 @@ class TallerSEYMO:
     
     def telefono_existe(self, telefono: str) -> bool:
         """Verifica si un teléfono ya existe"""
+        # Verifico en clientes
         cursor = self.db.execute_query('SELECT id FROM clientes WHERE telefono = ?', (telefono,))
         if cursor.fetchone():
             return True
         
+        # Verifico en empleados
         cursor = self.db.execute_query('SELECT id FROM empleados WHERE telefono = ?', (telefono,))
         return cursor.fetchone() is not None
     
@@ -1355,6 +1505,10 @@ class TallerSEYMO:
                 return None
         return None
 
+    # ==========================================================================
+    # MÉTODOS PARA EL SISTEMA INTELIGENTE DE RECORDATORIOS
+    # ==========================================================================
+    
     def menu_recordatorios_inteligentes(self):
         """Menú interactivo para recordatorios inteligentes predictivos"""
         while True:
@@ -1362,7 +1516,6 @@ class TallerSEYMO:
             print("🧠 SISTEMA INTELIGENTE DE RECORDATORIOS PREDICTIVOS")
             print("="*60)
             
-            # Obtener tipos de servicio disponibles
             tipos_servicio = self.recordatorios.obtener_tipos_servicio_disponibles()
             
             if not tipos_servicio:
@@ -1398,7 +1551,6 @@ class TallerSEYMO:
         print(f"\n📊 ANALIZANDO: {tipo_servicio}")
         print("⏳ Calculando patrones de mantenimiento...")
         
-        # Obtener estadísticas del servicio
         estadisticas = self.recordatorios.calcular_promedio_entre_servicios(tipo_servicio)
         
         print(f"\n📈 ESTADÍSTICAS DEL SISTEMA PARA '{tipo_servicio}':")
@@ -1411,7 +1563,7 @@ class TallerSEYMO:
             print("\n❌ No hay suficientes datos históricos para hacer predicciones.")
             return
         
-        # Obtener predicciones
+        # Pido al usuario el margen de días para buscar
         margen_dias = self.pedir_numero_con_reintentos("\n🔍 ¿En cuántos días quieres buscar recordatorios? (ej: 30): ", "entero")
         if margen_dias is None:
             margen_dias = 30
@@ -1433,12 +1585,12 @@ class TallerSEYMO:
         else:
             print(f"\n✅ No hay vehículos que necesiten '{tipo_servicio}' en los próximos {margen_dias} días")
         
-        # Mostrar vehículos sin historial de este servicio
+        # Muestro vehículos sin historial de este servicio
         vehiculos_sin_servicio = self.recordatorios.obtener_vehiculos_sin_servicio(tipo_servicio)
         if vehiculos_sin_servicio:
             print(f"\n🚙 VEHÍCULOS SIN HISTORIAL DE '{tipo_servicio}' ({len(vehiculos_sin_servicio)}):")
             print("   (Podrían necesitar su primer servicio de este tipo)")
-            for vehiculo in vehiculos_sin_servicio[:5]:  # Mostrar solo primeros 5
+            for vehiculo in vehiculos_sin_servicio[:5]: 
                 nit_info = f" - NIT: {vehiculo[6]}" if vehiculo[6] else ""
                 print(f"   • {vehiculo[1]} {vehiculo[2]} - {vehiculo[3]} - {vehiculo[4]}{nit_info}")
             
@@ -1485,7 +1637,7 @@ class TallerSEYMO:
         clientes_a_contactar = []
         
         for tipo_servicio in tipos_servicio:
-            # Buscar vehículos que necesitarán servicio en los próximos 15 días
+            # Busco vehículos que necesitarán servicio en los próximos 15 días
             recordatorios = self.recordatorios.predecir_proximo_servicio(tipo_servicio, 15)
             
             for recordatorio in recordatorios:
@@ -1500,7 +1652,7 @@ class TallerSEYMO:
                     'dias_restantes': recordatorio['dias_restantes']
                 })
         
-        # Ordenar por días restantes
+        # Ordeno por días restantes (más urgentes primero)
         clientes_a_contactar.sort(key=lambda x: x['dias_restantes'])
         
         if clientes_a_contactar:
@@ -1523,6 +1675,9 @@ class TallerSEYMO:
             print("\n✅ No hay clientes que necesiten contacto inmediato")
             print("💡 Todos los mantenimientos están bajo control")
 
+# ============================================================================
+# FUNCIONES AUXILIARES
+# ============================================================================
 def mostrar_reporte(reporte: Dict, taller):
     """Muestra un reporte formateado"""
     print(f"\n📊 REPORTE {reporte['periodo'].upper()}")
@@ -1536,15 +1691,19 @@ def mostrar_reporte(reporte: Dict, taller):
         for servicio, cantidad, total in reporte['servicios_populares']:
             print(f"      • {servicio}: {cantidad} trabajos (Q{total:.2f})")
     
-    # Generar gráfica si hay datos
+    # Pregunto si quiere generar gráfica
     if reporte['servicios_populares'] and input("\n¿Generar gráfica? (s/n): ").lower() == 's':
         nombre_archivo = f"servicios_populares_{reporte['periodo']}_{datetime.now().strftime('%Y%m%d')}"
         taller.reportes.crear_grafica_servicios_populares(reporte, nombre_archivo)
 
-# INTERFAZ PRINCIPAL COMPLETA
+# ============================================================================
+# MENÚ PRINCIPAL
+# Esta es la función principal que muestra el menú y maneja las opciones
+# ============================================================================
 def menu_principal():
     """Función principal con todas las opciones implementadas"""
     try:
+        # Inicializo el sistema
         taller = TallerSEYMO()
     except Exception as e:
         print(f"❌ Error crítico iniciando el sistema: {e}")
@@ -1552,6 +1711,7 @@ def menu_principal():
     
     while True:
         try:
+            # Muestro el menú principal
             print("\n" + "="*50)
             print("🔧 TALLER SEYMO - SISTEMA DE GESTIÓN")
             print("="*50)
@@ -1585,9 +1745,8 @@ def menu_principal():
             
             opcion = input("\nSelecciona una opción: ").strip()
             
-            # OPCIONES 1-11
+            # Opción 1: Nuevo Cliente + Vehículos
             if opcion == "1":
-                # Opción 1: Nuevo Cliente + Vehículos
                 print("\n👤 REGISTRAR NUEVO CLIENTE Y VEHÍCULOS")
                 nombre = input("Nombre del cliente: ").strip()
                 if not nombre:
@@ -1598,15 +1757,12 @@ def menu_principal():
                 if telefono is None and input("¿Continuar sin teléfono? (s/n): ").lower() != 's':
                     continue
                 
-                # NUEVO: Pedir NIT
                 nit = taller.pedir_nit_con_reintentos("NIT del cliente (opcional): ", obligatorio=False)
                 
-                # Agregar cliente
                 cliente_id = taller.clientes.agregar_cliente(nombre, telefono, nit)
                 if cliente_id is None:
                     continue
                 
-                # Agregar vehículos
                 while True:
                     print(f"\n🚗 AGREGAR VEHÍCULO PARA {nombre}")
                     marca = input("Marca del vehículo: ").strip()
@@ -1637,8 +1793,8 @@ def menu_principal():
                     if input("\n¿Agregar otro vehículo? (s/n): ").lower() != 's':
                         break
 
+            # Opción 2: Nuevo Empleado
             elif opcion == "2":
-                # Opción 2: Nuevo Empleado
                 print("\n👷 REGISTRAR NUEVO EMPLEADO")
                 nombre = input("Nombre del empleado: ").strip()
                 if not nombre:
@@ -1652,26 +1808,22 @@ def menu_principal():
                 resultado = taller.empleados.agregar_empleado(nombre, telefono)
                 print(resultado)
 
+            # Opción 3: Nueva Orden de Trabajo
             elif opcion == "3":
-                # Opción 3: Nueva Orden de Trabajo
                 print("\n📋 NUEVA ORDEN DE TRABAJO")
                 
-                # Seleccionar cliente
                 cliente_id = taller.seleccionar_cliente_interactivo()
                 if cliente_id is None:
                     continue
                 
-                # Seleccionar vehículo
                 vehiculo_id = taller.seleccionar_vehiculo_interactivo(cliente_id)
                 if vehiculo_id is None:
                     continue
                 
-                # Seleccionar empleado
                 empleado_id = taller.pedir_empleado_id_con_reintentos()
                 if empleado_id is None:
                     continue
                 
-                # Datos de la orden
                 numero_orden = taller.pedir_numero_con_reintentos("Número de orden: ", "entero")
                 if numero_orden is None:
                     continue
@@ -1712,8 +1864,8 @@ def menu_principal():
                 )
                 print(resultado)
 
+            # Opción 4: Añadir Vehículo a Cliente Existente
             elif opcion == "4":
-                # Opción 4: Añadir Vehículo a Cliente Existente
                 print("\n🚗 AÑADIR VEHÍCULO A CLIENTE EXISTENTE")
                 
                 cliente_id = taller.seleccionar_cliente_interactivo()
@@ -1745,8 +1897,8 @@ def menu_principal():
                 resultado = taller.vehiculos.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color)
                 print(resultado)
 
+            # Opción 5: Buscar y Ver Cliente
             elif opcion == "5":
-                # Opción 5: Buscar y Ver Cliente
                 print("\n🔍 BUSCAR Y VER CLIENTE")
                 cliente_id = taller.seleccionar_cliente_interactivo()
                 if cliente_id is None:
@@ -1769,8 +1921,8 @@ def menu_principal():
                 else:
                     print("❌ No se pudieron obtener los detalles del cliente.")
 
+            # Opción 6: Ver Historial por Vehículo
             elif opcion == "6":
-                # Opción 6: Ver Historial por Vehículo
                 print("\n🚗 VER HISTORIAL POR VEHÍCULO")
                 cliente_id = taller.seleccionar_cliente_interactivo()
                 if cliente_id is None:
@@ -1805,8 +1957,8 @@ def menu_principal():
                 else:
                     print("❌ No se pudieron obtener los detalles del vehículo.")
 
+            # Opción 7: Buscar Orden por ID
             elif opcion == "7":
-                # Opción 7: Buscar Orden por ID
                 print("\n🔍 BUSCAR ORDEN POR ID")
                 orden_id = taller.pedir_numero_con_reintentos("ID de la orden: ", "entero")
                 if orden_id is None:
@@ -1830,8 +1982,8 @@ def menu_principal():
                 else:
                     print("❌ No se encontró la orden con ese ID.")
 
+            # Opción 8: Editar Cliente
             elif opcion == "8":
-                # Opción 8: Editar Cliente
                 print("\n✏️ EDITAR CLIENTE")
                 cliente_id = taller.seleccionar_cliente_interactivo()
                 if cliente_id is None:
@@ -1848,9 +2000,9 @@ def menu_principal():
                 resultado = taller.clientes.editar_cliente(cliente_id, nuevo_nombre, nuevo_telefono, nuevo_nit)
                 print(resultado)
 
+            # Opción 9: Editar Empleado
             elif opcion == "9":
-                # Opción 9: Editar Empleado
-                print("\n✏️ EDITAR EMPLEado")
+                print("\n✏️ EDITAR EMPLEADO")
                 empleado_id = taller.pedir_numero_con_reintentos("ID del empleado a editar: ", "entero")
                 if empleado_id is None:
                     continue
@@ -1871,8 +2023,8 @@ def menu_principal():
                 resultado = taller.empleados.editar_empleado(empleado_id, nuevo_nombre, nuevo_telefono)
                 print(resultado)
 
+            # Opción 10: Editar Orden
             elif opcion == "10":
-                # Opción 10: Editar Orden
                 print("\n✏️ EDITAR ORDEN")
                 orden_id = taller.pedir_numero_con_reintentos("ID de la orden a editar: ", "entero")
                 if orden_id is None:
@@ -1903,8 +2055,8 @@ def menu_principal():
                 resultado = taller.ordenes.editar_orden(orden_id, nueva_descripcion, nuevo_precio, nuevo_tipo, nuevo_km)
                 print(resultado)
 
+            # Opción 11: Ver Reportes Avanzados
             elif opcion == "11":
-                # Opción 11: Ver Reportes Avanzados
                 print("\n📊 REPORTES AVANZADOS")
                 print("  1. Reporte Semanal")
                 print("  2. Reporte Mensual")
@@ -1951,16 +2103,19 @@ def menu_principal():
                 else:
                     print("❌ Opción de reporte no válida.")
 
-            # OPCIONES 12-14
+            # Opción 12: Recordatorios Inteligentes
             elif opcion == "12":
                 taller.menu_recordatorios_inteligentes()
             
+            # Opción 13: Análisis Completo de Servicios
             elif opcion == "13":
                 taller.analizar_todos_los_servicios()
             
+            # Opción 14: Reporte Proactivo para Clientes
             elif opcion == "14":
                 taller.generar_reporte_proactivo()
             
+            # Opción 0: Salir
             elif opcion == "0":
                 print("\n👋 ¡Gracias por usar el Sistema de Gestión del Taller SEYMO!")
                 print("¡Hasta pronto! 🚗💨")
@@ -1974,5 +2129,8 @@ def menu_principal():
         except Exception as e:
             print(f"❌ Error inesperado: {e}")
 
+# ============================================================================
+# PUNTO DE ENTRADA DEL PROGRAMA
+# ============================================================================
 if __name__ == "__main__":
     menu_principal()
