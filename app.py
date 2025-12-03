@@ -1,119 +1,94 @@
 # ============================================================================
-# TALLER SEYMO - SISTEMA DE GESTIÓN PARA TALLER MECÁNICO
+# TALLER SEYMO - SISTEMA DE GESTIÓN PARA TALLER MECÁNICO CON TKINTER
 # Proyecto personal
 # Autor: Miguel Sajquín
 # Fecha: 2025
 # ============================================================================
 
 # Importación de bibliotecas necesarias
-# Nota: Algunas de estas bibliotecas las aprendí en clase, otras las investigué
-import sqlite3  # Para trabajar con bases de datos (SQLite es fácil para empezar)
-import os  # Para manejar archivos y carpetas del sistema
-from datetime import datetime, timedelta  # Para manejar fechas y tiempos
-import pandas as pd  # Para análisis de datos (la vi en matemáticas aplicadas)
-from collections import Counter  # Para contar elementos en listas
-import matplotlib.pyplot as plt  # Para crear gráficas (aprendí en el curso de métodos numéricos)
-from typing import Optional, Dict, List, Tuple  # Para dar tipos a las variables (nuevo para mí)
-import warnings  # Para manejar advertencias
-import sys  # Para controlar el sistema
+import sqlite3
+import os
+from datetime import datetime, timedelta
+import pandas as pd
+from collections import Counter
+import matplotlib.pyplot as plt
+from typing import Optional, Dict, List, Tuple
+import warnings
+import sys
 
-# Esto es para evitar advertencias molestas que aparecían
-# El profesor dijo que está bien usar esto en proyectos pequeños
+# Importación de Tkinter para la interfaz gráfica
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext, simpledialog
+import matplotlib
+matplotlib.use('TkAgg')
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
+# Evitar advertencias
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 # ============================================================================
 # FUNCIÓN PARA CREAR CARPETAS
-# Esto lo hice porque al principio el programa fallaba si no existían las carpetas
 # ============================================================================
 def crear_estructura_carpetas():
     """Crea todas las carpetas necesarias antes de iniciar el sistema"""
     try:
-        # Defino las carpetas que necesito
-        # 'database' para la base de datos
-        # 'database/backups' para copias de seguridad (por si algo sale mal)
-        # 'reportes' para guardar las gráficas que genere el sistema
         carpetas = ['database', 'database/backups', 'reportes']
-        
-        # Recorro cada carpeta
         for carpeta in carpetas:
-            # Si la carpeta no existe, la creo
             if not os.path.exists(carpeta):
-                os.makedirs(carpeta)  # makedirs crea carpetas y subcarpetas
-                print(f"✅ Carpeta '{carpeta}' creada")
-        return True  # Si todo sale bien, retorno True
+                os.makedirs(carpeta)
+        return True
     except Exception as e:
-        # Si hay algún error, muestro mensaje y retorno False
         print(f"❌ Error crítico creando carpetas: {e}")
         return False
 
 # ============================================================================
 # INICIALIZACIÓN DEL SISTEMA
-# Esto se ejecuta apenas se importa el archivo
 # ============================================================================
-
-# Primero creo las carpetas necesarias
 if not crear_estructura_carpetas():
-    # Si no se pueden crear las carpetas, el programa no puede continuar
     print("❌ No se pudo crear la estructura de carpetas. Saliendo...")
-    sys.exit(1)  # Salgo del programa con código de error 1
+    sys.exit(1)
 
-# Intento importar seaborn para gráficas más bonitas
-# Seaborn no es obligatorio, pero si está disponible, la uso
 try:
-    import seaborn as sns  # Seaborn hace gráficas más profesionales
-    SEABORN_AVAILABLE = True  # Variable para saber si seaborn está disponible
-    print("✅ seaborn cargado correctamente")
+    import seaborn as sns
+    SEABORN_AVAILABLE = True
 except ImportError:
-    # Si seaborn no está instalado, uso matplotlib normal
     SEABORN_AVAILABLE = False
-    print("⚠️  seaborn no está disponible. Usando estilos básicos de matplotlib.")
 
 print("✅ Estructura de carpetas configurada correctamente")
 
 # ============================================================================
 # CLASE DATABASEMANAGER
-# Esta clase maneja todo lo relacionado con la base de datos
-# La hice siguiendo el patrón que vimos en clase: una clase por responsabilidad
 # ============================================================================
 class DatabaseManager:
     """Maneja la conexión y operaciones básicas de la base de datos"""
     
     def __init__(self, db_path: str = 'database/taller.db'):
-        # Inicializo la ruta de la base de datos
-        # Por defecto usa 'database/taller.db'
         self.db_path = db_path
-        self.conn = None  # La conexión empieza como None
-        self._initialize_database()  # Llamo al método de inicialización
+        self.conn = None
+        self._initialize_database()
     
     def _initialize_database(self):
         """Inicializa la base de datos con manejo robusto de errores"""
         try:
-            # Creo la conexión a la base de datos
             self.conn = self._create_connection()
             if self.conn is not None:
-                # Si la conexión se creó, creo las tablas
                 self.create_tables()
                 print("✅ Base de datos inicializada correctamente")
             else:
-                # Si no se pudo crear, lanzo un error
                 raise sqlite3.Error("No se pudo crear la conexión")
         except sqlite3.Error as e:
-            # Capturo cualquier error y muestro mensaje
             print(f"❌ Error inicializando base de datos: {e}")
-            raise  # Vuelvo a lanzar el error para que lo maneje el código que llamó
+            raise
     
     def _create_connection(self):
         """Crea conexión a la base de datos con manejo de errores"""
         try:
-            # Creo la conexión con SQLite
-            # check_same_thread=False permite usar la conexión desde varios hilos
-            # detect_types ayuda a manejar tipos de datos como fechas
             conn = sqlite3.connect(
                 self.db_path, 
                 check_same_thread=False,
                 detect_types=sqlite3.PARSE_DECLTYPES
             )
-            # Activo las foreign keys (relaciones entre tablas)
             conn.execute("PRAGMA foreign_keys = ON")
             return conn
         except sqlite3.Error as e:
@@ -122,16 +97,12 @@ class DatabaseManager:
     
     def create_tables(self):
         """Crea todas las tablas necesarias"""
-        # Verifico que haya conexión
         if self.conn is None:
             raise sqlite3.Error("No hay conexión a la base de datos")
         
-        cursor = self.conn.cursor()  # Creo un cursor para ejecutar comandos SQL
+        cursor = self.conn.cursor()
         
         try:
-            # Tabla clientes - almacena información de los clientes del taller
-            # AUTOINCREMENT hace que el ID se genere automáticamente
-            # UNIQUE asegura que no haya duplicados en teléfono y NIT
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS clientes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,8 +112,6 @@ class DatabaseManager:
                 )
             ''')
             
-            # Tabla vehículos - almacena los vehículos de cada cliente
-            # FOREIGN KEY relaciona con la tabla clientes
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS vehiculos (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,7 +127,6 @@ class DatabaseManager:
                 )
             ''')
             
-            # Tabla empleados - información de los mecánicos del taller
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS empleados (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,8 +135,6 @@ class DatabaseManager:
                 )
             ''')
             
-            # Tabla órdenes de trabajo - registro de todos los trabajos realizados
-            # Aquí es donde se guarda la información de cada servicio
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ordenes_trabajo (
                     id INTEGER PRIMARY KEY,
@@ -189,15 +155,11 @@ class DatabaseManager:
                 )
             ''')
             
-            # Verifico si necesito actualizar las tablas
-            # Esto es útil cuando cambio la estructura de la base de datos
             self._verificar_y_actualizar_tablas()
-            
-            self.conn.commit()  # Guardo los cambios en la base de datos
+            self.conn.commit()
             print("✅ Tablas creadas/verificadas correctamente")
             
         except sqlite3.Error as e:
-            # Si hay error, deshago los cambios
             self.conn.rollback()
             print(f"❌ Error creando tablas: {e}")
             raise
@@ -209,34 +171,24 @@ class DatabaseManager:
         try:
             print("🔄 Verificando estructura de tablas...")
             
-            # Verifico la tabla clientes
-            # PRAGMA table_info me dice qué columnas tiene una tabla
             cursor.execute("PRAGMA table_info(clientes)")
             columnas_clientes = [col[1] for col in cursor.fetchall()]
-            print(f"📋 Columnas actuales en clientes: {columnas_clientes}")
             
-            # Si la columna 'nit' no existe, la agrego
-            # Esto pasó cuando agregué el campo NIT después de crear la base de datos
             if 'nit' not in columnas_clientes:
                 print("🔄 Agregando columna 'nit' a tabla clientes...")
                 cursor.execute('ALTER TABLE clientes ADD COLUMN nit TEXT UNIQUE')
                 print("✅ Columna 'nit' agregada a clientes")
             
-            # Verifico la tabla vehículos
             cursor.execute("PRAGMA table_info(vehiculos)")
             columnas_vehiculos = [col[1] for col in cursor.fetchall()]
-            print(f"📋 Columnas actuales en vehiculos: {columnas_vehiculos}")
             
-            # Agrego columnas si no existen
             if 'proximo_mantenimiento' not in columnas_vehiculos:
                 print("🔄 Agregando columna 'proximo_mantenimiento' a vehiculos...")
                 cursor.execute('ALTER TABLE vehiculos ADD COLUMN proximo_mantenimiento DATE')
-                print("✅ Columna 'proximo_mantenimiento' agregada a vehiculos")
             
             if 'kilometraje_ultimo_mantenimiento' not in columnas_vehiculos:
                 print("🔄 Agregando columna 'kilometraje_ultimo_mantenimiento' a vehiculos...")
                 cursor.execute('ALTER TABLE vehiculos ADD COLUMN kilometraje_ultimo_mantenimiento REAL')
-                print("✅ Columna 'kilometraje_ultimo_mantenimiento' agregada a vehiculos")
             
             self.conn.commit()
             print("✅ Estructura de tablas actualizada correctamente")
@@ -247,38 +199,31 @@ class DatabaseManager:
     
     def execute_query(self, query: str, params: tuple = ()) -> sqlite3.Cursor:
         """Ejecuta una consulta y retorna el cursor"""
-        # Método simple para ejecutar consultas SQL
         cursor = self.conn.cursor()
         cursor.execute(query, params)
         return cursor
     
     def commit(self):
         """Realiza commit"""
-        # Método para guardar cambios en la base de datos
         self.conn.commit()
 
     def diagnosticar_estructura_bd(self):
         """Diagnostica la estructura actual de la base de datos"""
-        # Este método me ayuda a ver qué tablas y columnas tengo
-        # Es útil para depurar problemas
         cursor = self.conn.cursor()
         
         try:
             print("\n🔍 DIAGNÓSTICO DE ESTRUCTURA DE BD")
             
-            # Muestro información de la tabla clientes
             cursor.execute("PRAGMA table_info(clientes)")
             columnas = cursor.fetchall()
             print("\n📋 TABLA CLIENTES:")
             for col in columnas:
-                print(f"   - {col[1]} ({col[2]})")  # Nombre de columna y tipo
+                print(f"   - {col[1]} ({col[2]})")
             
-            # Cuento cuántos clientes hay
             cursor.execute("SELECT COUNT(*) FROM clientes")
             total_clientes = cursor.fetchone()[0]
             print(f"   Total de clientes: {total_clientes}")
             
-            # Muestro información de la tabla vehículos
             cursor.execute("PRAGMA table_info(vehiculos)")
             columnas_vehiculos = cursor.fetchall()
             print("\n📋 TABLA VEHICULOS:")
@@ -290,8 +235,6 @@ class DatabaseManager:
 
 # ============================================================================
 # CLASE VALIDATOR
-# Esta clase se encarga de validar todos los datos que ingresan los usuarios
-# Aprendí que es importante validar para evitar errores y datos incorrectos
 # ============================================================================
 class Validator:
     """Maneja todas las validaciones de datos"""
@@ -300,16 +243,15 @@ class Validator:
     def validar_numero(valor: str, tipo: str = "entero") -> Optional[float]:
         """Valida que el valor sea un número válido"""
         try:
-            if not valor.strip():  # Si el valor está vacío
+            if not valor.strip():
                 return None
             if tipo == "entero":
-                return int(valor)  # Convierto a entero
+                return int(valor)
             elif tipo == "decimal":
-                return float(valor)  # Convierto a decimal
+                return float(valor)
             else:
                 return valor
         except ValueError:
-            # Si no se puede convertir a número, retorno None
             return None
     
     @staticmethod
@@ -318,10 +260,8 @@ class Validator:
         if telefono is None or telefono.strip() == "":
             return None
         
-        # Filtro solo los dígitos del teléfono
         telefono_limpio = ''.join(filter(str.isdigit, telefono))
         
-        # Verifico que tenga una longitud razonable
         if len(telefono_limpio) < 7 or len(telefono_limpio) > 15:
             return None
         
@@ -333,10 +273,8 @@ class Validator:
         if nit is None or nit.strip() == "":
             return None
         
-        # Filtro caracteres válidos: letras, números, guiones y espacios
         nit_limpio = ''.join(filter(lambda c: c.isalnum() or c in '- ', nit))
         
-        # Verifico longitud
         if len(nit_limpio) < 3 or len(nit_limpio) > 20:
             return None
         
@@ -349,109 +287,96 @@ class Validator:
             if not fecha_str.strip():
                 return None
                 
-            # Si el usuario ingresa un número, lo interpreto como días desde hoy
             if fecha_str.isdigit():
                 dias = int(fecha_str)
                 fecha = datetime.now() + timedelta(days=dias)
             else:
-                # Si ingresa una fecha en formato YYYY-MM-DD
                 fecha = datetime.strptime(fecha_str, '%Y-%m-%d')
             
             hoy = datetime.now().date()
             fecha_date = fecha.date()
             
-            # Validaciones de rango de fecha
             if fecha_date < datetime(2000, 1, 1).date():
-                print("❌ Error: La fecha no puede ser anterior al año 2000.")
                 return None
             
             if fecha_date > hoy + timedelta(days=365):
-                print("❌ Error: La fecha no puede ser más de 1 año en el futuro.")
                 return None
                 
             if not permitir_futuro and fecha_date > hoy:
-                print("❌ Error: La fecha no puede ser futura.")
                 return None
                 
             if not permitir_pasado and fecha_date < hoy:
-                print("❌ Error: La fecha no puede ser pasada.")
                 return None
             
             return fecha_date
             
         except ValueError:
-            print("❌ Error: Formato de fecha inválido. Use YYYY-MM-DD o número de días.")
             return None
     
     @staticmethod
     def validar_año_vehiculo(año: int) -> bool:
         """Valida que el año del vehículo sea razonable"""
         año_actual = datetime.now().year
-        # Un vehículo no puede ser de antes de 1900 ni de más de 2 años en el futuro
         return 1900 <= año <= año_actual + 2
 
 # ============================================================================
 # CLASE CLIENTEMANAGER
-# Maneja todas las operaciones relacionadas con clientes
-# Usé el principio de responsabilidad única: cada clase hace una cosa
 # ============================================================================
 class ClienteManager:
     """Gestiona todas las operaciones relacionadas con clientes"""
     
     def __init__(self, db_manager: DatabaseManager, validator: Validator):
-        # Recibo las dependencias por constructor (inyección de dependencias)
         self.db = db_manager
         self.validator = validator
     
     def agregar_cliente(self, nombre: str, telefono: Optional[str] = None, nit: Optional[str] = None) -> Optional[int]:
         """Agrega un nuevo cliente a la base de datos"""
         try:
-            # Ejecuto la consulta INSERT para agregar el cliente
             cursor = self.db.execute_query(
                 'INSERT INTO clientes (nombre, telefono, nit) VALUES (?, ?, ?)', 
                 (nombre, telefono, nit)
             )
-            self.db.commit()  # Guardo los cambios
+            self.db.commit()
             print(f"✅ Cliente '{nombre}' agregado con ID: {cursor.lastrowid}")
-            return cursor.lastrowid  # Retorno el ID del nuevo cliente
+            return cursor.lastrowid
         except sqlite3.IntegrityError as e:
-            # Manejo errores de duplicados
             if "telefono" in str(e):
-                print("❌ Error: Ya existe un cliente con ese teléfono")
+                raise Exception("Ya existe un cliente con ese teléfono")
             elif "nit" in str(e):
-                print("❌ Error: Ya existe un cliente con ese NIT")
+                raise Exception("Ya existe un cliente con ese NIT")
             else:
-                print("❌ Error de integridad en la base de datos")
-            return None
+                raise Exception("Error de integridad en la base de datos")
     
     def cliente_existe(self, cliente_id: int) -> bool:
         """Verifica si un cliente existe"""
-        # Consulta simple para verificar existencia
         cursor = self.db.execute_query('SELECT id FROM clientes WHERE id = ?', (cliente_id,))
         return cursor.fetchone() is not None
     
     def buscar_cliente_por_nombre(self, nombre_buscar: str) -> List[Tuple]:
         """Busca clientes por nombre"""
-        # Uso LIKE para búsqueda parcial (contiene el texto)
         cursor = self.db.execute_query(
             'SELECT id, nombre, telefono, nit FROM clientes WHERE nombre LIKE ? ORDER BY nombre',
-            (f'%{nombre_buscar}%',)  # % significa "cualquier texto antes/después"
+            (f'%{nombre_buscar}%',)
+        )
+        return cursor.fetchall()
+    
+    def obtener_todos_clientes(self) -> List[Tuple]:
+        """Obtiene todos los clientes"""
+        cursor = self.db.execute_query(
+            'SELECT id, nombre, telefono, nit FROM clientes ORDER BY nombre'
         )
         return cursor.fetchall()
     
     def editar_cliente(self, cliente_id: int, nuevo_nombre: str, nuevo_telefono: Optional[str], nuevo_nit: Optional[str]) -> str:
         """Edita la información de un cliente"""
         try:
-            # Consulta UPDATE para modificar el cliente
             self.db.execute_query(
                 'UPDATE clientes SET nombre = ?, telefono = ?, nit = ? WHERE id = ?',
                 (nuevo_nombre, nuevo_telefono, nuevo_nit, cliente_id)
             )
             self.db.commit()
-            print(f"✅ Cliente ID {cliente_id} actualizado")
             return f"✅ Cliente ID {cliente_id} actualizado"
         except sqlite3.IntegrityError as e:
-            # Manejo errores de duplicados
             if "telefono" in str(e):
                 return "❌ Error: Ya existe un cliente con ese teléfono"
             elif "nit" in str(e):
@@ -464,21 +389,18 @@ class ClienteManager:
         if not self.cliente_existe(cliente_id):
             return None
         
-        # Obtengo información básica del cliente
         cursor = self.db.execute_query(
             'SELECT nombre, telefono, nit FROM clientes WHERE id = ?', 
             (cliente_id,)
         )
         cliente_info = cursor.fetchone()
         
-        # Obtengo todos los vehículos del cliente
         cursor = self.db.execute_query(
             'SELECT id, marca, modelo, año, placa, color FROM vehiculos WHERE cliente_id = ?',
             (cliente_id,)
         )
         vehiculos = cursor.fetchall()
         
-        # Retorno un diccionario con toda la información
         return {
             'cliente': cliente_info,
             'vehiculos': vehiculos
@@ -493,7 +415,6 @@ class ClienteManager:
 
 # ============================================================================
 # CLASE VEHICULOMANAGER
-# Maneja operaciones relacionadas con vehículos
 # ============================================================================
 class VehiculoManager:
     """Gestiona todas las operaciones relacionadas con vehículos"""
@@ -516,11 +437,9 @@ class VehiculoManager:
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (cliente_id, marca, modelo, año, placa, color))
             self.db.commit()
-            mensaje = f"✅ Vehículo {marca} {modelo} agregado (ID: {cursor.lastrowid})"
-            print(mensaje)
-            return mensaje
+            return f"✅ Vehículo {marca} {modelo} agregado (ID: {cursor.lastrowid})"
         except sqlite3.IntegrityError:
-            return "❌ Error: Ya existe un vehículo con esa placa"
+            raise Exception("Ya existe un vehículo con esa placa")
     
     def obtener_vehiculos_cliente(self, cliente_id: int) -> List[Tuple]:
         """Obtiene todos los vehículos de un cliente"""
@@ -540,7 +459,6 @@ class VehiculoManager:
         if not self.vehiculo_existe(vehiculo_id):
             return None
         
-        # Obtengo información del vehículo y su dueño
         cursor = self.db.execute_query('''
             SELECT v.marca, v.modelo, v.año, v.placa, v.color, c.nombre, c.telefono, c.nit
             FROM vehiculos v
@@ -549,7 +467,6 @@ class VehiculoManager:
         ''', (vehiculo_id,))
         vehiculo_info = cursor.fetchone()
         
-        # Obtengo el historial de órdenes de este vehículo
         cursor = self.db.execute_query('''
             SELECT o.id, o.fecha_inicio, o.fecha_fin, o.descripcion_trabajo, 
                    o.tipo_servicio, o.precio_final, o.kilometraje, o.unidad_kilometraje,
@@ -565,10 +482,23 @@ class VehiculoManager:
             'vehiculo': vehiculo_info,
             'ordenes': ordenes
         }
+    
+    def editar_vehiculo(self, vehiculo_id: int, marca: str, modelo: str, año: int, 
+                       placa: str, color: Optional[str] = None) -> str:
+        """Edita la información de un vehículo"""
+        try:
+            self.db.execute_query('''
+                UPDATE vehiculos 
+                SET marca = ?, modelo = ?, año = ?, placa = ?, color = ?
+                WHERE id = ?
+            ''', (marca, modelo, año, placa, color, vehiculo_id))
+            self.db.commit()
+            return f"✅ Vehículo ID {vehiculo_id} actualizado"
+        except sqlite3.IntegrityError:
+            raise Exception("Ya existe un vehículo con esa placa")
 
 # ============================================================================
 # CLASE EMPLEADOMANAGER
-# Maneja operaciones relacionadas con empleados
 # ============================================================================
 class EmpleadoManager:
     """Gestiona todas las operaciones relacionadas con empleados"""
@@ -585,11 +515,9 @@ class EmpleadoManager:
                 (nombre, telefono)
             )
             self.db.commit()
-            mensaje = f"✅ Empleado '{nombre}' agregado (ID: {cursor.lastrowid})"
-            print(mensaje)
-            return mensaje
+            return f"✅ Empleado '{nombre}' agregado (ID: {cursor.lastrowid})"
         except sqlite3.IntegrityError:
-            return "❌ Error: Ya existe un empleado con ese teléfono"
+            raise Exception("Ya existe un empleado con ese teléfono")
     
     def empleado_existe(self, empleado_id: int) -> bool:
         """Verifica si un empleado existe"""
@@ -598,7 +526,7 @@ class EmpleadoManager:
     
     def listar_empleados(self) -> List[Tuple]:
         """Lista todos los empleados"""
-        cursor = self.db.execute_query('SELECT id, nombre FROM empleados ORDER BY nombre')
+        cursor = self.db.execute_query('SELECT id, nombre, telefono FROM empleados ORDER BY nombre')
         return cursor.fetchall()
     
     def editar_empleado(self, empleado_id: int, nuevo_nombre: str, nuevo_telefono: str) -> str:
@@ -609,15 +537,12 @@ class EmpleadoManager:
                 (nuevo_nombre, nuevo_telefono, empleado_id)
             )
             self.db.commit()
-            print(f"✅ Empleado ID {empleado_id} actualizado")
             return f"✅ Empleado ID {empleado_id} actualizado"
         except sqlite3.IntegrityError:
             return "❌ Error: Ya existe un empleado con ese teléfono"
 
 # ============================================================================
 # CLASE ORDENMANAGER
-# Maneja operaciones relacionadas con órdenes de trabajo
-# Aquí es donde se guarda la información de los servicios realizados
 # ============================================================================
 class OrdenManager:
     """Gestiona todas las operaciones relacionadas con órdenes de trabajo"""
@@ -636,7 +561,6 @@ class OrdenManager:
         if not self.orden_existe(orden_id):
             return None
         
-        # Consulta compleja que junta información de varias tablas
         cursor = self.db.execute_query('''
             SELECT 
                 o.id, o.fecha_inicio, o.fecha_fin, o.descripcion_trabajo, 
@@ -657,7 +581,6 @@ class OrdenManager:
         if not orden_info:
             return None
         
-        # Organizo toda la información en un diccionario
         return {
             'id': orden_info[0],
             'fecha_inicio': orden_info[1],
@@ -686,21 +609,17 @@ class OrdenManager:
                      unidad_kilometraje: str = 'km', fecha_fin: Optional[str] = None) -> str:
         """Agrega una nueva orden de trabajo"""
         
-        # Valido la fecha de finalización
         fecha_fin_validada = None
         if fecha_fin:
             fecha_fin_validada = self.validator.validar_fecha(fecha_fin, permitir_futuro=True, permitir_pasado=True)
             if fecha_fin_validada is None:
                 return "❌ Error: Fecha de finalización inválida."
         else:
-            # Si no se especifica fecha, uso la actual
             fecha_fin_validada = datetime.now().date()
         
-        # Calculo el precio final (repuestos + mano de obra)
         precio_final = costo_repuestos + costo_mano_obra
         
         try:
-            # Inserto la nueva orden
             self.db.execute_query('''
                 INSERT INTO ordenes_trabajo 
                 (id, vehiculo_id, empleado_id, descripcion_trabajo, tipo_servicio,
@@ -712,9 +631,7 @@ class OrdenManager:
                   kilometraje, unidad_kilometraje, fecha_fin_validada))
             
             self.db.commit()
-            mensaje = f"✅ Orden #{numero_orden} agregada - Total: Q{precio_final}"
-            print(mensaje)
-            return mensaje
+            return f"✅ Orden #{numero_orden} agregada - Total: Q{precio_final:.2f}"
         except sqlite3.IntegrityError as e:
             return f"❌ Error al agregar orden: {e}"
     
@@ -729,15 +646,12 @@ class OrdenManager:
             ''', (nueva_descripcion, nuevo_precio, nuevo_tipo, nuevo_km, orden_id))
             
             self.db.commit()
-            print(f"✅ Orden #{orden_id} actualizada")
             return f"✅ Orden #{orden_id} actualizada"
         except Exception as e:
             return f"❌ Error al editar orden: {e}"
 
 # ============================================================================
 # CLASE REPORTMANAGER
-# Maneja la generación de reportes y gráficas
-# Esta es la parte más interesante del proyecto, donde uso análisis de datos
 # ============================================================================
 class ReportManager:
     """Gestiona la generación de reportes y gráficas"""
@@ -747,15 +661,13 @@ class ReportManager:
     
     def reporte_periodo(self, periodo: str = 'semana') -> Dict:
         """Genera reportes del período especificado"""
-        # Determino la fecha de inicio según el período
         if periodo == 'semana':
             fecha_inicio = datetime.now() - timedelta(days=datetime.now().weekday())
         elif periodo == 'mes':
             fecha_inicio = datetime.now().replace(day=1)
-        else:  # 'año'
+        else:
             fecha_inicio = datetime.now().replace(month=1, day=1)
         
-        # Obtengo estadísticas básicas
         cursor = self.db.execute_query('''
             SELECT SUM(precio_final), SUM(horas_trabajadas), COUNT(*)
             FROM ordenes_trabajo 
@@ -764,7 +676,6 @@ class ReportManager:
         
         ganancias, horas, trabajos = cursor.fetchone()
         
-        # Obtengo los servicios más populares
         cursor = self.db.execute_query('''
             SELECT tipo_servicio, COUNT(*), SUM(precio_final)
             FROM ordenes_trabajo 
@@ -776,7 +687,6 @@ class ReportManager:
         
         servicios_populares = cursor.fetchall()
         
-        # Retorno todo en un diccionario
         return {
             'ganancias': ganancias or 0,
             'horas_trabajadas': horas or 0,
@@ -785,130 +695,6 @@ class ReportManager:
             'fecha_inicio': fecha_inicio.date(),
             'servicios_populares': servicios_populares
         }
-    
-    def reporte_periodo_historico(self, año: int, periodo: str = 'año') -> Dict:
-        """Genera reportes para años pasados"""
-        # Similar al anterior, pero para períodos históricos
-        if periodo == 'año':
-            fecha_inicio = datetime(año, 1, 1)
-            fecha_fin = datetime(año, 12, 31)
-        elif periodo == 'mes':
-            fecha_inicio = datetime(año, datetime.now().month, 1)
-            fecha_fin = datetime(año, datetime.now().month, 1) + timedelta(days=32)
-            fecha_fin = fecha_fin.replace(day=1) - timedelta(days=1)
-        else:
-            fecha_inicio = datetime(año, 1, 1)
-            fecha_fin = datetime(año, 12, 31)
-        
-        cursor = self.db.execute_query('''
-            SELECT SUM(precio_final), SUM(horas_trabajadas), COUNT(*)
-            FROM ordenes_trabajo 
-            WHERE fecha_fin BETWEEN ? AND ?
-        ''', (fecha_inicio.date(), fecha_fin.date()))
-        
-        ganancias, horas, trabajos = cursor.fetchone()
-        
-        cursor = self.db.execute_query('''
-            SELECT tipo_servicio, COUNT(*), SUM(precio_final)
-            FROM ordenes_trabajo 
-            WHERE fecha_fin BETWEEN ? AND ?
-            GROUP BY tipo_servicio
-            ORDER BY COUNT(*) DESC
-            LIMIT 5
-        ''', (fecha_inicio.date(), fecha_fin.date()))
-        
-        servicios_populares = cursor.fetchall()
-        
-        return {
-            'ganancias': ganancias or 0,
-            'horas_trabajadas': horas or 0,
-            'trabajos_completados': trabajos or 0,
-            'periodo': periodo,
-            'año': año,
-            'fecha_inicio': fecha_inicio.date(),
-            'fecha_fin': fecha_fin.date(),
-            'servicios_populares': servicios_populares
-        }
-    
-    def proyeccion_crecimiento(self) -> Optional[Dict]:
-        """Genera proyecciones de crecimiento basadas en datos históricos"""
-        # Este es el método más avanzado, usa análisis de tendencias
-        fecha_inicio = datetime.now().replace(day=1) - timedelta(days=365)
-        
-        # Obtengo datos mensuales
-        cursor = self.db.execute_query('''
-            SELECT strftime('%Y-%m', fecha_fin) as mes, 
-                   SUM(precio_final) as ingresos,
-                   COUNT(*) as trabajos
-            FROM ordenes_trabajo 
-            WHERE fecha_fin >= ?
-            GROUP BY mes
-            ORDER BY mes
-        ''', (fecha_inicio.date(),))
-        
-        datos_mensuales = cursor.fetchall()
-        
-        # Necesito al menos 3 meses de datos para hacer proyecciones
-        if len(datos_mensuales) < 3:
-            return None
-        
-        # Calculo el crecimiento promedio
-        ingresos = [d[1] for d in datos_mensuales]
-        crecimiento_promedio = sum((ingresos[i] - ingresos[i-1]) / ingresos[i-1] 
-                                 for i in range(1, len(ingresos))) / (len(ingresos) - 1)
-        
-        # Proyecto para los próximos 6 meses
-        ultimo_ingreso = ingresos[-1]
-        proyecciones = []
-        
-        for i in range(1, 7):
-            mes_proyectado = (datetime.now() + timedelta(days=30*i)).strftime('%Y-%m')
-            # Fórmula de crecimiento compuesto
-            ingreso_proyectado = ultimo_ingreso * (1 + crecimiento_promedio) ** i
-            proyecciones.append((mes_proyectado, ingreso_proyectado))
-        
-        return {
-            'crecimiento_promedio': crecimiento_promedio,
-            'proyecciones': proyecciones,
-            'datos_historicos': datos_mensuales
-        }
-    
-    def predecir_alta_demanda(self) -> Dict:
-        """Predice períodos de alta demanda basado en patrones históricos"""
-        # Analizo en qué meses hay más trabajo históricamente
-        cursor = self.db.execute_query('''
-            SELECT strftime('%m', fecha_fin) as mes, 
-                   COUNT(*) as cantidad_trabajos,
-                   AVG(precio_final) as precio_promedio
-            FROM ordenes_trabajo 
-            GROUP BY mes
-            ORDER BY cantidad_trabajos DESC
-        ''')
-        
-        datos_mensuales = cursor.fetchall()
-        
-        # Identifico los 3 meses con mayor demanda
-        meses_alta_demanda = []
-        for mes, cantidad, precio in datos_mensuales[:3]:
-            nombre_mes = self._obtener_nombre_mes(int(mes))
-            meses_alta_demanda.append({
-                'mes': nombre_mes,
-                'trabajos': cantidad,
-                'precio_promedio': precio or 0
-            })
-        
-        return {
-            'meses_alta_demanda': meses_alta_demanda,
-            'todos_los_meses': datos_mensuales
-        }
-    
-    def _obtener_nombre_mes(self, numero_mes: int) -> str:
-        """Convierte número de mes a nombre"""
-        meses = [
-            'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-            'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-        ]
-        return meses[numero_mes - 1] if 1 <= numero_mes <= 12 else f"Mes {numero_mes}"
     
     def crear_grafica_servicios_populares(self, reporte: Dict, nombre_archivo: str):
         """Crea gráfica de servicios más populares"""
@@ -916,97 +702,86 @@ class ReportManager:
             print("❌ No hay datos para generar la gráfica")
             return
         
-        # Extraigo datos para la gráfica
         servicios = [s[0] for s in reporte['servicios_populares']]
         cantidades = [s[1] for s in reporte['servicios_populares']]
         
-        # Creo la figura
-        plt.figure(figsize=(10, 6))
+        fig = Figure(figsize=(10, 6))
+        ax = fig.add_subplot(111)
         
-        # Uso seaborn si está disponible (hace gráficas más bonitas)
         if SEABORN_AVAILABLE:
-            sns.barplot(x=cantidades, y=servicios, palette='viridis')
-            plt.title('Servicios Más Solicitados', fontsize=14, fontweight='bold')
+            import seaborn as sns
+            sns.barplot(x=cantidades, y=servicios, palette='viridis', ax=ax)
         else:
-            plt.barh(servicios, cantidades, color='skyblue', alpha=0.7)
-            plt.title('Servicios Más Solicitados', fontsize=14, fontweight='bold')
+            ax.barh(servicios, cantidades, color='skyblue', alpha=0.7)
         
-        plt.xlabel('Cantidad de Trabajos')
-        plt.tight_layout()
+        ax.set_title('Servicios Más Solicitados', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Cantidad de Trabajos')
         
-        # Guardo la gráfica en un archivo
+        fig.tight_layout()
+        
         archivo_path = f'reportes/{nombre_archivo}.png'
-        plt.savefig(archivo_path, dpi=300, bbox_inches='tight')
-        plt.close()
+        fig.savefig(archivo_path, dpi=300, bbox_inches='tight')
         
         print(f"✅ Gráfica guardada: {archivo_path}")
+        return fig
     
-    def crear_grafica_ingresos_mensuales(self, datos_mensuales: List[Tuple], nombre_archivo: str):
-        """Crea gráfica de ingresos mensuales"""
-        if not datos_mensuales:
-            print("❌ No hay datos para generar la gráfica")
-            return
-        
-        meses = [d[0] for d in datos_mensuales]
-        ingresos = [d[1] for d in datos_mensuales]
-        
-        plt.figure(figsize=(12, 6))
-        
-        if SEABORN_AVAILABLE:
-            sns.lineplot(x=meses, y=ingresos, marker='o', linewidth=2.5)
-            plt.title('Ingresos Mensuales', fontsize=14, fontweight='bold')
-        else:
-            plt.plot(meses, ingresos, marker='o', linewidth=2, markersize=6)
-            plt.title('Ingresos Mensuales', fontsize=14, fontweight='bold')
+    def proyeccion_crecimiento(self) -> Dict:
+        """Genera proyecciones de crecimiento basadas en datos históricos"""
+        try:
+            # Obtener datos históricos de los últimos 6 meses
+            seis_meses_atras = (datetime.now() - timedelta(days=180)).date()
             
-        plt.xlabel('Mes')
-        plt.ylabel('Ingresos (Q)')  # Q es Quetzales (moneda de Guatemala)
-        plt.xticks(rotation=45)
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        
-        archivo_path = f'reportes/{nombre_archivo}.png'
-        plt.savefig(archivo_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        print(f"✅ Gráfica guardada: {archivo_path}")
-    
-    def crear_grafica_proyeccion(self, proyeccion: Dict, nombre_archivo: str):
-        """Crea gráfica de proyección de crecimiento"""
-        # Separo datos históricos y proyecciones
-        meses_historicos = [d[0] for d in proyeccion['datos_historicos']]
-        ingresos_historicos = [d[1] for d in proyeccion['datos_historicos']]
-        
-        meses_proyeccion = [p[0] for p in proyeccion['proyecciones']]
-        ingresos_proyeccion = [p[1] for p in proyeccion['proyecciones']]
-        
-        plt.figure(figsize=(12, 6))
-        
-        if SEABORN_AVAILABLE:
-            sns.lineplot(x=meses_historicos, y=ingresos_historicos, marker='o', label='Histórico', linewidth=2.5)
-            sns.lineplot(x=meses_proyeccion, y=ingresos_proyeccion, marker='o', label='Proyección', linestyle='--', linewidth=2.5)
-        else:
-            plt.plot(meses_historicos, ingresos_historicos, 'b-o', label='Histórico', linewidth=2)
-            plt.plot(meses_proyeccion, ingresos_proyeccion, 'r--o', label='Proyección', linewidth=2)
-        
-        plt.title('Proyección de Crecimiento', fontsize=14, fontweight='bold')
-        plt.xlabel('Mes')
-        plt.ylabel('Ingresos (Q)')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        
-        archivo_path = f'reportes/{nombre_archivo}.png'
-        plt.savefig(archivo_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        print(f"✅ Gráfica guardada: {archivo_path}")
+            cursor = self.db.execute_query('''
+                SELECT 
+                    strftime('%Y-%m', fecha_fin) as mes,
+                    SUM(precio_final) as total
+                FROM ordenes_trabajo 
+                WHERE fecha_fin >= ?
+                GROUP BY strftime('%Y-%m', fecha_fin)
+                ORDER BY fecha_fin DESC
+                LIMIT 6
+            ''', (seis_meses_atras,))
+            
+            datos = cursor.fetchall()
+            
+            if len(datos) < 2:
+                return None
+            
+            # Calcular crecimiento promedio
+            totales = [d[1] for d in datos]
+            crecimientos = []
+            
+            for i in range(1, len(totales)):
+                if totales[i-1] > 0:
+                    crecimiento = (totales[i] - totales[i-1]) / totales[i-1]
+                    crecimientos.append(crecimiento)
+            
+            if not crecimientos:
+                return None
+            
+            crecimiento_promedio = sum(crecimientos) / len(crecimientos)
+            
+            # Generar proyecciones para los próximos 6 meses
+            proyecciones = []
+            ultimo_total = totales[-1] if totales else 0
+            
+            for i in range(1, 7):
+                mes_proyectado = (datetime.now() + timedelta(days=30*i)).strftime('%Y-%m')
+                ingreso_proyectado = ultimo_total * (1 + crecimiento_promedio) ** i
+                proyecciones.append((mes_proyectado, ingreso_proyectado))
+            
+            return {
+                'crecimiento_promedio': crecimiento_promedio,
+                'proyecciones': proyecciones,
+                'datos_historicos': datos
+            }
+            
+        except Exception as e:
+            print(f"❌ Error generando proyección: {e}")
+            return None
 
 # ============================================================================
 # CLASE RECORDATORIOSINTELIGENTES
-# Esta es la parte más avanzada del sistema
-# Usa análisis de datos para predecir cuándo los vehículos necesitarán mantenimiento
 # ============================================================================
 class RecordatoriosInteligentes:
     """Sistema inteligente que predice mantenimiento basado en historial de servicios"""
@@ -1023,128 +798,33 @@ class RecordatoriosInteligentes:
         ''')
         return [servicio[0] for servicio in cursor.fetchall()]
     
-    def calcular_promedio_entre_servicios(self, tipo_servicio: str) -> Dict:
-        """Calcula el promedio de tiempo entre servicios para un tipo específico"""
-        # Uso la función LAG de SQL para comparar servicios consecutivos
-        cursor = self.db.execute_query('''
-            SELECT o.vehiculo_id, o.fecha_fin, o.kilometraje,
-                   LAG(o.fecha_fin) OVER (PARTITION BY o.vehiculo_id ORDER BY o.fecha_fin) as fecha_anterior,
-                   LAG(o.kilometraje) OVER (PARTITION BY o.vehiculo_id ORDER BY o.fecha_fin) as km_anterior
-            FROM ordenes_trabajo o
-            WHERE o.tipo_servicio = ?
-            ORDER BY o.vehiculo_id, o.fecha_fin
-        ''', (tipo_servicio,))
-        
-        datos = cursor.fetchall()
-        
-        if not datos:
-            return {'dias_promedio': 0, 'km_promedio': 0, 'total_vehiculos': 0, 'total_servicios': 0}
-        
-        # Calculo diferencias entre servicios consecutivos
-        diferencias_dias = []
-        diferencias_km = []
-        vehiculos_analizados = set()
-        total_servicios = 0
-        
-        for i in range(1, len(datos)):
-            vehiculo_actual, fecha_actual, km_actual, fecha_anterior, km_anterior = datos[i]
-            
-            if fecha_anterior and km_anterior: 
-                # Manejo diferentes formatos de fecha (string vs date)
-                if isinstance(fecha_actual, str):
-                    fecha_actual_dt = datetime.strptime(fecha_actual, '%Y-%m-%d')
-                else:
-                    fecha_actual_dt = datetime.combine(fecha_actual, datetime.min.time())
-                    
-                if isinstance(fecha_anterior, str):
-                    fecha_anterior_dt = datetime.strptime(fecha_anterior, '%Y-%m-%d')
-                else:
-                    fecha_anterior_dt = datetime.combine(fecha_anterior, datetime.min.time())
-                
-                # Calculo diferencia en días
-                dias_diferencia = (fecha_actual_dt - fecha_anterior_dt).days
-                
-                # Calculo diferencia en kilómetros
-                km_diferencia = km_actual - km_anterior
-                
-                # Solo considero diferencias positivas
-                if dias_diferencia > 0 and km_diferencia > 0:
-                    diferencias_dias.append(dias_diferencia)
-                    diferencias_km.append(km_diferencia)
-                    vehiculos_analizados.add(vehiculo_actual)
-                    total_servicios += 1
-        
-        if diferencias_dias:
-            return {
-                'dias_promedio': sum(diferencias_dias) / len(diferencias_dias),
-                'km_promedio': sum(diferencias_km) / len(diferencias_km),
-                'total_vehiculos': len(vehiculos_analizados),
-                'total_servicios': total_servicios
-            }
-        else:
-            return {'dias_promedio': 0, 'km_promedio': 0, 'total_vehiculos': 0, 'total_servicios': 0}
-    
-    def obtener_ultimo_servicio_vehiculo(self, vehiculo_id: int, tipo_servicio: str) -> Optional[Tuple]:
-        """Obtiene el último servicio de un tipo específico para un vehículo"""
-        cursor = self.db.execute_query('''
-            SELECT fecha_fin, kilometraje 
-            FROM ordenes_trabajo 
-            WHERE vehiculo_id = ? AND tipo_servicio = ?
-            ORDER BY fecha_fin DESC 
-            LIMIT 1
-        ''', (vehiculo_id, tipo_servicio))
-        
-        resultado = cursor.fetchone()
-        
-        if resultado:
-            fecha, kilometraje = resultado
-            if not isinstance(fecha, str):
-                fecha = fecha.strftime('%Y-%m-%d')  # Convierto a string si es date
-            return (fecha, kilometraje)
-        
-        return None
-    
     def predecir_proximo_servicio(self, tipo_servicio: str, margen_dias: int = 30) -> List[Dict]:
         """Predice qué vehículos necesitarán pronto un servicio específico"""
-        # Obtengo estadísticas del servicio
-        estadisticas = self.calcular_promedio_entre_servicios(tipo_servicio)
-        
-        if estadisticas['total_servicios'] == 0:
-            return []
-        
-        # Obtengo todos los vehículos que han tenido este servicio
+        # Obtener vehículos con este tipo de servicio
         cursor = self.db.execute_query('''
-            SELECT DISTINCT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono, c.nit
+            SELECT DISTINCT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono, c.nit,
+                   MAX(o.fecha_fin) as ultima_fecha, MAX(o.kilometraje) as ultimo_km
             FROM vehiculos v
             JOIN ordenes_trabajo o ON v.id = o.vehiculo_id
             JOIN clientes c ON v.cliente_id = c.id
             WHERE o.tipo_servicio = ?
+            GROUP BY v.id
         ''', (tipo_servicio,))
         
         vehiculos = cursor.fetchall()
         resultados = []
         
         for vehiculo in vehiculos:
-            vehiculo_id, marca, modelo, placa, cliente, telefono, nit = vehiculo
+            vehiculo_id, marca, modelo, placa, cliente, telefono, nit, ultima_fecha, ultimo_km = vehiculo
             
-            # Obtengo último servicio de este tipo
-            ultimo_servicio = self.obtener_ultimo_servicio_vehiculo(vehiculo_id, tipo_servicio)
-            
-            if ultimo_servicio:
-                fecha_ultimo, km_ultimo = ultimo_servicio
-                
-                # Convierto fecha si es necesario
-                if isinstance(fecha_ultimo, str):
-                    fecha_ultimo_dt = datetime.strptime(fecha_ultimo, '%Y-%m-%d')
+            if ultima_fecha:
+                if isinstance(ultima_fecha, str):
+                    fecha_ultimo_dt = datetime.strptime(ultima_fecha, '%Y-%m-%d')
                 else:
-                    fecha_ultimo_dt = datetime.combine(fecha_ultimo, datetime.min.time())
+                    fecha_ultimo_dt = datetime.combine(ultima_fecha, datetime.min.time())
                 
-                # Calculo fecha estimada del próximo servicio
-                # Usando el promedio histórico
-                fecha_estimada = fecha_ultimo_dt + timedelta(days=estadisticas['dias_promedio'])
-                km_estimado = km_ultimo + estadisticas['km_promedio']
-                
-                # Verifico si está próximo (dentro del margen de días)
+                # Estimación simple: 6 meses después del último servicio
+                fecha_estimada = fecha_ultimo_dt + timedelta(days=180)
                 dias_restantes = (fecha_estimada - datetime.now()).days
                 
                 if dias_restantes <= margen_dias and dias_restantes >= 0:
@@ -1156,64 +836,23 @@ class RecordatoriosInteligentes:
                         'cliente': cliente,
                         'telefono': telefono,
                         'nit': nit,
-                        'ultimo_servicio': fecha_ultimo if isinstance(fecha_ultimo, str) else fecha_ultimo.strftime('%Y-%m-%d'),
-                        'km_ultimo': km_ultimo,
+                        'ultimo_servicio': ultima_fecha if isinstance(ultima_fecha, str) else ultima_fecha.strftime('%Y-%m-%d'),
+                        'km_ultimo': ultimo_km or 0,
                         'proximo_estimado': fecha_estimada.strftime('%Y-%m-%d'),
-                        'km_estimado': km_estimado,
-                        'dias_restantes': dias_restantes,
-                        'dias_promedio_historico': estadisticas['dias_promedio'],
-                        'km_promedio_historico': estadisticas['km_promedio']
+                        'dias_restantes': dias_restantes
                     })
         
-        # Ordeno por proximidad (menos días primero)
         resultados.sort(key=lambda x: x['dias_restantes'])
-        return resultados
-    
-    def obtener_vehiculos_sin_servicio(self, tipo_servicio: str) -> List[Tuple]:
-        """Obtiene vehículos que nunca han tenido este tipo de servicio"""
-        # Estos vehículos podrían necesitar su primer servicio
-        cursor = self.db.execute_query('''
-            SELECT v.id, v.marca, v.modelo, v.placa, c.nombre, c.telefono, c.nit
-            FROM vehiculos v
-            JOIN clientes c ON v.cliente_id = c.id
-            WHERE v.id NOT IN (
-                SELECT DISTINCT vehiculo_id 
-                FROM ordenes_trabajo 
-                WHERE tipo_servicio = ?
-            )
-        ''', (tipo_servicio,))
-        
-        return cursor.fetchall()
-    
-    def analizar_patrones_todos_servicios(self) -> Dict:
-        """Analiza patrones para todos los tipos de servicio disponibles"""
-        # Este método analiza todos los servicios de una vez
-        tipos_servicio = self.obtener_tipos_servicio_disponibles()
-        resultados = {}
-        
-        for tipo_servicio in tipos_servicio:
-            estadisticas = self.calcular_promedio_entre_servicios(tipo_servicio)
-            predicciones = self.predecir_proximo_servicio(tipo_servicio, 60)  # 60 días de margen
-            
-            resultados[tipo_servicio] = {
-                'estadisticas': estadisticas,
-                'predicciones': predicciones,
-                'total_predicciones': len(predicciones)
-            }
-        
         return resultados
 
 # ============================================================================
 # CLASE TALLERSEYMO
-# Clase principal que coordina todas las funcionalidades
-# Esta es la clase que orquesta todo el sistema
 # ============================================================================
 class TallerSEYMO:
     """Clase principal que coordina todas las funcionalidades del taller"""
     
     def __init__(self):
         try:
-            # Inicializo todas las dependencias
             self.db = DatabaseManager()
             self.validator = Validator()
             self.clientes = ClienteManager(self.db, self.validator)
@@ -1222,915 +861,1294 @@ class TallerSEYMO:
             self.ordenes = OrdenManager(self.db, self.validator)
             self.reportes = ReportManager(self.db)
             self.recordatorios = RecordatoriosInteligentes(self.db)
-            
-            # Diagnóstico inicial
-            self.db.diagnosticar_estructura_bd()
             
             print("✅ Sistema Taller SEYMO inicializado correctamente")
             
         except Exception as e:
-            # Si hay error al inicializar, intento recrear la base de datos
             print(f"❌ Error crítico iniciando el sistema: {e}")
-            print("🔄 Intentando recrear base de datos...")
-            self._recrear_base_datos()
-    
-    def _recrear_base_datos(self):
-        """Recrea la base de datos desde cero"""
-        import os
-        import sqlite3
-        
-        db_path = 'database/taller.db'
-        
-        # Cierro conexión si existe
-        if hasattr(self, 'db') and self.db.conn:
-            self.db.conn.close()
-        
-        # Elimino el archivo existente
-        if os.path.exists(db_path):
-            os.remove(db_path)
-            print("🗑️ Base de datos anterior eliminada")
-        
-        # Recreo carpetas
-        crear_estructura_carpetas()
-        
-        # Reintento inicialización
-        try:
-            self.db = DatabaseManager()
-            self.validator = Validator()
-            self.clientes = ClienteManager(self.db, self.validator)
-            self.vehiculos = VehiculoManager(self.db, self.validator)
-            self.empleados = EmpleadoManager(self.db, self.validator)
-            self.ordenes = OrdenManager(self.db, self.validator)
-            self.reportes = ReportManager(self.db)
-            self.recordatorios = RecordatoriosInteligentes(self.db)
-            
-            print("✅ Nueva base de datos creada exitosamente")
-            
-        except Exception as e:
-            print(f"❌ Error fatal: No se pudo crear la base de datos: {e}")
             raise
 
-    # ==========================================================================
-    # MÉTODOS PARA INTERACCIÓN CON EL USUARIO
-    # Estos métodos manejan la entrada de datos con validación y reintentos
-    # ==========================================================================
+# ============================================================================
+# INTERFAZ GRÁFICA CON TKINTER
+# ============================================================================
+class TallerSEYMOGUI:
+    """Interfaz gráfica para el sistema del taller"""
     
-    def pedir_numero_con_reintentos(self, mensaje: str, tipo: str = "entero", intentos: int = 5) -> Optional[float]:
-        """Pide un número al usuario con reintentos y mensajes de error claros"""
-        for intento in range(intentos):
-            try:
-                valor = input(mensaje).strip()
-                if not valor:
-                    print("❌ Error: No puedes dejar este campo vacío.")
-                    continue
-                    
-                resultado = self.validator.validar_numero(valor, tipo)
-                
-                if resultado is not None:
-                    return resultado
-                else:
-                    print(f"❌ Error: Debes ingresar un número {'entero' if tipo == 'entero' else 'decimal'} válido.")
-                    intentos_restantes = intentos - intento - 1
-                    if intentos_restantes > 0:
-                        print(f"💡 Te quedan {intentos_restantes} intentos.")
-                    else:
-                        print("❌ Has agotado todos los intentos.")
-                    
-            except KeyboardInterrupt:
-                print("\n❌ Operación cancelada por el usuario.")
-                return None
-            except Exception as e:
-                print(f"❌ Error inesperado: {e}")
-                return None
-        return None
-    
-    def pedir_telefono_con_reintentos(self, mensaje: str, obligatorio: bool = False, intentos: int = 5) -> Optional[str]:
-        """Pide un teléfono con validación y reintentos"""
-        for intento in range(intentos):
-            try:
-                telefono = input(mensaje).strip()
-                
-                if not obligatorio and not telefono:
-                    return None
-                
-                if obligatorio and not telefono:
-                    print("❌ Error: El teléfono es obligatorio.")
-                    continue
-                
-                telefono_validado = self.validator.validar_telefono(telefono)
-                if not telefono_validado:
-                    print("❌ Error: El teléfono debe contener solo números (7-15 dígitos). Ejemplo: 1234567890")
-                    intentos_restantes = intentos - intento - 1
-                    if intentos_restantes > 0:
-                        print(f"💡 Te quedan {intentos_restantes} intentos.")
-                    continue
-                
-                if self.telefono_existe(telefono_validado):
-                    print("❌ Error: Este número de teléfono ya está registrado en el sistema.")
-                    intentos_restantes = intentos - intento - 1
-                    if intentos_restantes > 0:
-                        print(f"💡 Te quedan {intentos_restantes} intentos.")
-                    continue
-                
-                return telefono_validado
-                
-            except KeyboardInterrupt:
-                print("\n❌ Operación cancelada por el usuario.")
-                return None
-            except Exception as e:
-                print(f"❌ Error inesperado: {e}")
-                return None
-        return None
-    
-    def pedir_nit_con_reintentos(self, mensaje: str, obligatorio: bool = False, intentos: int = 5) -> Optional[str]:
-        """Pide un NIT con validación y reintentos"""
-        for intento in range(intentos):
-            try:
-                nit = input(mensaje).strip()
-                
-                if not obligatorio and not nit:
-                    return None
-                
-                if obligatorio and not nit:
-                    print("❌ Error: El NIT es obligatorio.")
-                    continue
-                
-                nit_validado = self.validator.validar_nit(nit)
-                if not nit_validado:
-                    print("❌ Error: El NIT debe contener solo números, letras y guiones (3-20 caracteres).")
-                    intentos_restantes = intentos - intento - 1
-                    if intentos_restantes > 0:
-                        print(f"💡 Te quedan {intentos_restantes} intentos.")
-                    continue
-                
-                if self.nit_existe(nit_validado):
-                    print("❌ Error: Este NIT ya está registrado en el sistema.")
-                    intentos_restantes = intentos - intento - 1
-                    if intentos_restantes > 0:
-                        print(f"💡 Te quedan {intentos_restantes} intentos.")
-                    continue
-                
-                return nit_validado
-                
-            except KeyboardInterrupt:
-                print("\n❌ Operación cancelada por el usuario.")
-                return None
-            except Exception as e:
-                print(f"❌ Error inesperado: {e}")
-                return None
-        return None
-    
-    def telefono_existe(self, telefono: str) -> bool:
-        """Verifica si un teléfono ya existe"""
-        # Verifico en clientes
-        cursor = self.db.execute_query('SELECT id FROM clientes WHERE telefono = ?', (telefono,))
-        if cursor.fetchone():
-            return True
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Taller SEYMO - Sistema de Gestión")
+        self.root.geometry("1200x800")
         
-        # Verifico en empleados
-        cursor = self.db.execute_query('SELECT id FROM empleados WHERE telefono = ?', (telefono,))
-        return cursor.fetchone() is not None
-    
-    def nit_existe(self, nit: str) -> bool:
-        """Verifica si un NIT ya existe"""
-        return self.clientes.nit_existe(nit)
-    
-    def seleccionar_cliente_interactivo(self) -> Optional[int]:
-        """Permite al usuario buscar y seleccionar un cliente interactivamente"""
-        while True:
-            try:
-                nombre_buscar = input("\n🔍 Nombre del cliente a buscar (Enter para cancelar): ").strip()
-                if not nombre_buscar:
-                    return None
-                
-                clientes = self.clientes.buscar_cliente_por_nombre(nombre_buscar)
-                
-                if not clientes:
-                    print("❌ No se encontraron clientes con ese nombre. Intenta con otro nombre.")
-                    continue
-                
-                print(f"\n✅ Se encontraron {len(clientes)} cliente(s):")
-                for i, cliente in enumerate(clientes, 1):
-                    telefono_info = f" - Tel: {cliente[2]}" if cliente[2] else ""
-                    nit_info = f" - NIT: {cliente[3]}" if cliente[3] else ""
-                    print(f"   {i}. ID: {cliente[0]} - {cliente[1]}{telefono_info}{nit_info}")
-                
-                seleccion = input(f"\nSelecciona un cliente (1-{len(clientes)}) o 0 para buscar de nuevo: ").strip()
-                if seleccion == "0":
-                    continue
-                
-                if not seleccion.isdigit():
-                    print("❌ Error: Debes ingresar un número.")
-                    continue
-                
-                idx = int(seleccion) - 1
-                if 0 <= idx < len(clientes):
-                    return clientes[idx][0]
-                else:
-                    print(f"❌ Error: Selección inválida. Debe ser entre 1 y {len(clientes)}.")
-                    
-            except KeyboardInterrupt:
-                print("\n❌ Operación cancelada por el usuario.")
-                return None
-            except Exception as e:
-                print(f"❌ Error inesperado: {e}")
-                return None
-    
-    def seleccionar_vehiculo_interactivo(self, cliente_id: int) -> Optional[int]:
-        """Permite seleccionar un vehículo de un cliente con reintentos"""
-        while True:
-            try:
-                vehiculos = self.vehiculos.obtener_vehiculos_cliente(cliente_id)
-                
-                if not vehiculos:
-                    print("❌ Este cliente no tiene vehículos registrados.")
-                    return None
-                
-                print(f"\n🚗 Vehículos del cliente:")
-                for i, vehiculo in enumerate(vehiculos, 1):
-                    print(f"   {i}. {vehiculo[1]} {vehiculo[2]} {vehiculo[3]} - Placa: {vehiculo[4]}")
-                
-                seleccion = input(f"\nSelecciona un vehículo (1-{len(vehiculos)}) o 0 para cancelar: ").strip()
-                if seleccion == "0":
-                    return None
-                
-                if not seleccion.isdigit():
-                    print("❌ Error: Debes ingresar un número.")
-                    continue
-                
-                idx = int(seleccion) - 1
-                if 0 <= idx < len(vehiculos):
-                    return vehiculos[idx][0]
-                else:
-                    print(f"❌ Error: Selección inválida. Debe ser entre 1 y {len(vehiculos)}.")
-                    
-            except KeyboardInterrupt:
-                print("\n❌ Operación cancelada por el usuario.")
-                return None
-            except Exception as e:
-                print(f"❌ Error inesperado: {e}")
-                return None
-    
-    def pedir_empleado_id_con_reintentos(self, intentos: int = 5) -> Optional[int]:
-        """Pide el ID de un empleado con validación y reintentos"""
-        for intento in range(intentos):
-            try:
-                print("\n--- Lista de Empleados ---")
-                empleados = self.empleados.listar_empleados()
-                if not empleados:
-                    print("❌ No hay empleados registrados en el sistema.")
-                    return None
-                
-                for empleado in empleados:
-                    print(f"  ID: {empleado[0]} - {empleado[1]}")
-                
-                empleado_id = self.pedir_numero_con_reintentos("\nID del empleado: ", "entero", 3)
-                if empleado_id is None:
-                    return None
-                
-                if not self.empleados.empleado_existe(empleado_id):
-                    print("❌ Error: El empleado no existe. Verifica el ID e intenta nuevamente.")
-                    intentos_restantes = intentos - intento - 1
-                    if intentos_restantes > 0:
-                        print(f"💡 Te quedan {intentos_restantes} intentos.")
-                    continue
-                
-                return empleado_id
-                
-            except KeyboardInterrupt:
-                print("\n❌ Operación cancelada por el usuario.")
-                return None
-            except Exception as e:
-                print(f"❌ Error inesperado: {e}")
-                return None
-        return None
-
+        # Inicializar sistema
+        try:
+            self.taller = TallerSEYMO()
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo inicializar el sistema: {e}")
+            self.root.destroy()
+            return
+        
+        # Variables para seguimiento
+        self.cliente_seleccionado = None
+        self.vehiculo_seleccionado = None
+        self.empleado_seleccionado = None
+        
+        # Configurar estilo
+        self.setup_styles()
+        
+        # Crear interfaz
+        self.create_widgets()
+        
+    def setup_styles(self):
+        """Configura los estilos de la interfaz"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        # Colores
+        self.primary_color = "#2c3e50"
+        self.secondary_color = "#3498db"
+        self.success_color = "#27ae60"
+        self.warning_color = "#e67e22"
+        self.danger_color = "#e74c3c"
+        
+        # Configurar estilos
+        self.root.configure(bg=self.primary_color)
+        
+    def create_widgets(self):
+        """Crea todos los widgets de la interfaz"""
+        # Frame principal
+        main_frame = tk.Frame(self.root, bg=self.primary_color)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Título
+        title_frame = tk.Frame(main_frame, bg=self.primary_color)
+        title_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        tk.Label(
+            title_frame,
+            text="🔧 TALLER SEYMO - SISTEMA DE GESTIÓN",
+            font=("Arial", 20, "bold"),
+            bg=self.primary_color,
+            fg="white"
+        ).pack()
+        
+        tk.Label(
+            title_frame,
+            text="Gestión Integral para Taller Mecánico",
+            font=("Arial", 12),
+            bg=self.primary_color,
+            fg="#ecf0f1"
+        ).pack()
+        
+        # Frame para botones (2 filas de botones)
+        buttons_frame = tk.Frame(main_frame, bg=self.primary_color)
+        buttons_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        # Crear botones principales
+        self.create_main_buttons(buttons_frame)
+        
+        # Frame para área de resultados
+        self.result_frame = tk.Frame(main_frame, bg="white", relief=tk.SUNKEN, borderwidth=2)
+        self.result_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Área de texto para resultados
+        self.result_text = scrolledtext.ScrolledText(
+            self.result_frame,
+            font=("Consolas", 10),
+            wrap=tk.WORD,
+            bg="#f8f9fa",
+            relief=tk.FLAT
+        )
+        self.result_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Barra de estado
+        self.status_bar = tk.Label(
+            self.root,
+            text="✅ Sistema listo | © 2025 Taller SEYMO",
+            bd=1,
+            relief=tk.SUNKEN,
+            anchor=tk.W,
+            bg="#2c3e50",
+            fg="white"
+        )
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+    def create_main_buttons(self, parent):
+        """Crea los botones principales del menú"""
+        # Primera fila de botones
+        row1_frame = tk.Frame(parent, bg=self.primary_color)
+        row1_frame.pack(fill=tk.X, pady=5)
+        
+        buttons_row1 = [
+            ("📝 Nuevo Cliente", self.registrar_cliente),
+            ("🚗 Nuevo Vehículo", self.registrar_vehiculo),
+            ("👷 Nuevo Empleado", self.registrar_empleado),
+            ("📋 Nueva Orden", self.nueva_orden),
+            ("🔍 Buscar Cliente", self.buscar_cliente)
+        ]
+        
+        for i, (text, command) in enumerate(buttons_row1):
+            btn = tk.Button(
+                row1_frame,
+                text=text,
+                command=command,
+                font=("Arial", 10, "bold"),
+                bg=self.secondary_color,
+                fg="white",
+                relief=tk.RAISED,
+                borderwidth=2,
+                cursor="hand2",
+                padx=15,
+                pady=10,
+                width=15
+            )
+            btn.grid(row=0, column=i, padx=5, pady=5, sticky="nsew")
+            row1_frame.grid_columnconfigure(i, weight=1)
+        
+        # Segunda fila de botones
+        row2_frame = tk.Frame(parent, bg=self.primary_color)
+        row2_frame.pack(fill=tk.X, pady=5)
+        
+        buttons_row2 = [
+            ("🔧 Historial Vehículo", self.historial_vehiculo),
+            ("✏️ Editar Cliente", self.editar_cliente),
+            ("✏️ Editar Empleado", self.editar_empleado),
+            ("📊 Reportes", self.menu_reportes),
+            ("🧠 Recordatorios", self.recordatorios_inteligentes),
+            ("❌ Salir", self.salir)
+        ]
+        
+        for i, (text, command) in enumerate(buttons_row2):
+            btn = tk.Button(
+                row2_frame,
+                text=text,
+                command=command,
+                font=("Arial", 10, "bold"),
+                bg=self.warning_color if "Editar" in text else self.secondary_color,
+                fg="white",
+                relief=tk.RAISED,
+                borderwidth=2,
+                cursor="hand2",
+                padx=15,
+                pady=10,
+                width=15
+            )
+            btn.grid(row=0, column=i, padx=5, pady=5, sticky="nsew")
+            row2_frame.grid_columnconfigure(i, weight=1)
+        
+    def clear_results(self):
+        """Limpia el área de resultados"""
+        self.result_text.delete(1.0, tk.END)
+        
+    def show_message(self, message, success=True):
+        """Muestra un mensaje en el área de resultados"""
+        self.clear_results()
+        color = self.success_color if success else self.danger_color
+        self.result_text.insert(tk.END, message)
+        self.result_text.tag_configure("center", justify='center', foreground=color)
+        self.result_text.tag_add("center", "1.0", "end")
+        
     # ==========================================================================
-    # MÉTODOS PARA EL SISTEMA DE RECORDATORIOS
+    # FUNCIONALIDADES PRINCIPALES - CORREGIDAS
     # ==========================================================================
     
-    def menu_recordatorios_inteligentes(self):
-        """Menú interactivo para recordatorios inteligentes predictivos"""
-        while True:
-            print(f"\n{'='*60}")
-            print("🧠 SISTEMA INTELIGENTE DE RECORDATORIOS PREDICTIVOS")
-            print("="*60)
-            
-            tipos_servicio = self.recordatorios.obtener_tipos_servicio_disponibles()
-            
-            if not tipos_servicio:
-                print("❌ No hay tipos de servicio registrados en el sistema.")
-                print("   Agregue algunas órdenes de trabajo primero.")
-                return
-            
-            print("🔧 TIPOS DE SERVICIO DISPONIBLES:")
-            for i, servicio in enumerate(tipos_servicio, 1):
-                print(f"   {i}. {servicio}")
-            
-            print(f"   0. ↩️ Volver al menú principal")
-            print("="*60)
-            
+    def registrar_cliente(self):
+        """Registra un nuevo cliente"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Registrar Nuevo Cliente")
+        dialog.geometry("400x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Variables
+        nombre_var = tk.StringVar()
+        telefono_var = tk.StringVar()
+        nit_var = tk.StringVar()
+        
+        def guardar():
             try:
-                seleccion = input("\nSelecciona el tipo de mantenimiento a analizar: ")
-                
-                if seleccion == "0":
+                # Validar datos del cliente
+                if not nombre_var.get().strip():
+                    messagebox.showerror("Error", "El nombre del cliente es obligatorio")
                     return
                 
-                idx = int(seleccion) - 1
-                if 0 <= idx < len(tipos_servicio):
-                    tipo_servicio_seleccionado = tipos_servicio[idx]
-                    self.analizar_recordatorios_servicio(tipo_servicio_seleccionado)
-                else:
-                    print("❌ Selección inválida.")
-                    
-            except ValueError:
-                print("❌ Por favor ingresa un número válido.")
-
-    def analizar_recordatorios_servicio(self, tipo_servicio: str):
-        """Analiza y muestra recordatorios para un tipo de servicio específico"""
-        print(f"\n📊 ANALIZANDO: {tipo_servicio}")
-        print("⏳ Calculando patrones de mantenimiento...")
-        
-        estadisticas = self.recordatorios.calcular_promedio_entre_servicios(tipo_servicio)
-        
-        print(f"\n📈 ESTADÍSTICAS DEL SISTEMA PARA '{tipo_servicio}':")
-        print(f"   📅 Promedio de días entre servicios: {estadisticas['dias_promedio']:.0f} días")
-        print(f"   🛣️  Promedio de km entre servicios: {estadisticas['km_promedio']:.0f} km")
-        print(f"   🚗 Vehículos analizados: {estadisticas['total_vehiculos']}")
-        print(f"   🔧 Servicios analizados: {estadisticas['total_servicios']}")
-        
-        if estadisticas['total_servicios'] == 0:
-            print("\n❌ No hay suficientes datos históricos para hacer predicciones.")
-            return
-        
-        # Pido al usuario el margen de días para buscar
-        margen_dias = self.pedir_numero_con_reintentos("\n🔍 ¿En cuántos días quieres buscar recordatorios? (ej: 30): ", "entero")
-        if margen_dias is None:
-            margen_dias = 30
-        
-        print(f"\n🔔 BUSCANDO VEHÍCULOS QUE NECESITARÁN SERVICIO EN PRÓXIMOS {margen_dias} DÍAS...")
-        
-        recordatorios = self.recordatorios.predecir_proximo_servicio(tipo_servicio, margen_dias)
-        
-        if recordatorios:
-            print(f"\n🚗 VEHÍCULOS PRÓXIMOS A '{tipo_servicio}' ({len(recordatorios)}):")
-            for i, recordatorio in enumerate(recordatorios, 1):
-                print(f"\n   {i}. {recordatorio['marca']} {recordatorio['modelo']} - {recordatorio['placa']}")
-                print(f"      👤 Cliente: {recordatorio['cliente']} - 📞 {recordatorio['telefono'] or 'No tiene'} - 🏢 {recordatorio['nit'] or 'No tiene'}")
-                print(f"      📅 Último servicio: {recordatorio['ultimo_servicio']} ({recordatorio['km_ultimo']} km)")
-                print(f"      🎯 Próximo estimado: {recordatorio['proximo_estimado']} ({recordatorio['km_estimado']:.0f} km)")
-                print(f"      ⏰ Días restantes: {recordatorio['dias_restantes']} días")
-                print(f"      📊 Basado en: {recordatorio['dias_promedio_historico']:.0f} días / {recordatorio['km_promedio_historico']:.0f} km promedio")
-                print("      " + "-" * 50)
-        else:
-            print(f"\n✅ No hay vehículos que necesiten '{tipo_servicio}' en los próximos {margen_dias} días")
-        
-        # Muestro vehículos sin historial de este servicio
-        vehiculos_sin_servicio = self.recordatorios.obtener_vehiculos_sin_servicio(tipo_servicio)
-        if vehiculos_sin_servicio:
-            print(f"\n🚙 VEHÍCULOS SIN HISTORIAL DE '{tipo_servicio}' ({len(vehiculos_sin_servicio)}):")
-            print("   (Podrían necesitar su primer servicio de este tipo)")
-            for vehiculo in vehiculos_sin_servicio[:5]: 
-                nit_info = f" - NIT: {vehiculo[6]}" if vehiculo[6] else ""
-                print(f"   • {vehiculo[1]} {vehiculo[2]} - {vehiculo[3]} - {vehiculo[4]}{nit_info}")
-            
-            if len(vehiculos_sin_servicio) > 5:
-                print(f"   ... y {len(vehiculos_sin_servicio) - 5} más")
-
-    def analizar_todos_los_servicios(self):
-        """Analiza todos los tipos de servicio disponibles"""
-        print(f"\n{'='*60}")
-        print("📊 ANÁLISIS COMPLETO DE TODOS LOS SERVICIOS")
-        print("="*60)
-        
-        resultados = self.recordatorios.analizar_patrones_todos_servicios()
-        
-        if not resultados:
-            print("❌ No hay datos suficientes para realizar el análisis.")
-            return
-        
-        total_predicciones = 0
-        for tipo_servicio, datos in resultados.items():
-            estadisticas = datos['estadisticas']
-            predicciones = datos['predicciones']
-            
-            print(f"\n🔧 {tipo_servicio.upper()}:")
-            print(f"   📊 {estadisticas['total_servicios']} servicios analizados")
-            print(f"   🚗 {estadisticas['total_vehiculos']} vehículos en historial")
-            print(f"   ⏱️  Promedio: {estadisticas['dias_promedio']:.0f} días / {estadisticas['km_promedio']:.0f} km")
-            print(f"   🔔 {len(predicciones)} vehículos necesitarán servicio pronto")
-            
-            total_predicciones += len(predicciones)
-        
-        print(f"\n📈 RESUMEN GENERAL:")
-        print(f"   🔧 Tipos de servicio analizados: {len(resultados)}")
-        print(f"   🚗 Total de predicciones activas: {total_predicciones}")
-        print(f"   💡 Recomendación: {'Contacta clientes proactivamente' if total_predicciones > 0 else 'Mantenimiento preventivo al día'}")
-
-    def generar_reporte_proactivo(self):
-        """Genera un reporte proactivo para contactar clientes"""
-        print(f"\n{'='*60}")
-        print("📞 REPORTE PROACTIVO PARA CONTACTO DE CLIENTES")
-        print("="*60)
-        
-        tipos_servicio = self.recordatorios.obtener_tipos_servicio_disponibles()
-        clientes_a_contactar = []
-        
-        for tipo_servicio in tipos_servicio:
-            # Busco vehículos que necesitarán servicio en los próximos 15 días
-            recordatorios = self.recordatorios.predecir_proximo_servicio(tipo_servicio, 15)
-            
-            for recordatorio in recordatorios:
-                clientes_a_contactar.append({
-                    'tipo_servicio': tipo_servicio,
-                    'cliente': recordatorio['cliente'],
-                    'telefono': recordatorio['telefono'],
-                    'nit': recordatorio['nit'],
-                    'vehiculo': f"{recordatorio['marca']} {recordatorio['modelo']}",
-                    'placa': recordatorio['placa'],
-                    'proximo_servicio': recordatorio['proximo_estimado'],
-                    'dias_restantes': recordatorio['dias_restantes']
-                })
-        
-        # Ordeno por días restantes (más urgentes primero)
-        clientes_a_contactar.sort(key=lambda x: x['dias_restantes'])
-        
-        if clientes_a_contactar:
-            print(f"\n📞 CLIENTES A CONTACTAR ({len(clientes_a_contactar)}):")
-            for i, cliente in enumerate(clientes_a_contactar, 1):
-                print(f"\n   {i}. {cliente['cliente']}")
-                print(f"      📞 Teléfono: {cliente['telefono'] or 'No tiene'}")
-                print(f"      🏢 NIT: {cliente['nit'] or 'No tiene'}")
-                print(f"      🚗 Vehículo: {cliente['vehiculo']} - {cliente['placa']}")
-                print(f"      🔧 Servicio: {cliente['tipo_servicio']}")
-                print(f"      📅 Próximo servicio: {cliente['proximo_servicio']}")
-                print(f"      ⏰ Urgencia: {cliente['dias_restantes']} días restantes")
-                print("      " + "-" * 40)
-            
-            print(f"\n💡 ACCIONES RECOMENDADAS:")
-            print("   • Contacta a los clientes con menos de 7 días restantes primero")
-            print("   • Ofrece descuentos por reserva anticipada")
-            print("   • Programa citas con al menos 3 días de anticipación")
-        else:
-            print("\n✅ No hay clientes que necesiten contacto inmediato")
-            print("💡 Todos los mantenimientos están bajo control")
-
-# ============================================================================
-# FUNCIONES AUXILIARES
-# ============================================================================
-def mostrar_reporte(reporte: Dict, taller):
-    """Muestra un reporte formateado"""
-    print(f"\n📊 REPORTE {reporte['periodo'].upper()}")
-    print(f"   📅 Período: {reporte['fecha_inicio']} al {datetime.now().date()}")
-    print(f"   💰 Ganancias totales: Q{reporte['ganancias']:.2f}")
-    print(f"   ⏱️  Horas trabajadas: {reporte['horas_trabajadas']:.1f}")
-    print(f"   🔧 Trabajos completados: {reporte['trabajos_completados']}")
-    
-    if reporte['servicios_populares']:
-        print(f"\n   🏆 SERVICIOS MÁS POPULARES:")
-        for servicio, cantidad, total in reporte['servicios_populares']:
-            print(f"      • {servicio}: {cantidad} trabajos (Q{total:.2f})")
-    
-    # Pregunto si quiere generar gráfica
-    if reporte['servicios_populares'] and input("\n¿Generar gráfica? (s/n): ").lower() == 's':
-        nombre_archivo = f"servicios_populares_{reporte['periodo']}_{datetime.now().strftime('%Y%m%d')}"
-        taller.reportes.crear_grafica_servicios_populares(reporte, nombre_archivo)
-
-# ============================================================================
-# MENÚ PRINCIPAL
-# Esta es la función principal que muestra el menú y maneja las opciones
-# ============================================================================
-def menu_principal():
-    """Función principal con todas las opciones implementadas"""
-    try:
-        # Inicializo el sistema
-        taller = TallerSEYMO()
-    except Exception as e:
-        print(f"❌ Error crítico iniciando el sistema: {e}")
-        return
-    
-    while True:
-        try:
-            # Muestro el menú principal
-            print("\n" + "="*50)
-            print("🔧 TALLER SEYMO - SISTEMA DE GESTIÓN")
-            print("="*50)
-            
-            print("📝 CREAR Y REGISTRAR")
-            print("  1. Nuevo Cliente + Vehículos")
-            print("  2. Nuevo Empleado")
-            print("  3. Nueva Orden de Trabajo")
-            print("  4. Añadir Vehículo a Cliente Existente")
-            
-            print("\n🔍 BUSCAR Y CONSULTAR")
-            print("  5. Buscar y Ver Cliente")
-            print("  6. Ver Historial por Vehículo")
-            print("  7. Buscar Orden por ID")
-            
-            print("\n✏️ EDITAR Y ACTUALIZAR")
-            print("  8. Editar Cliente")
-            print("  9. Editar Empleado")
-            print("  10. Editar Orden")
-            
-            print("\n📊 REPORTES Y ANÁLISIS")
-            print("  11. Ver Reportes Avanzados")
-            
-            print("\n🧠 MANTENIMIENTO INTELIGENTE")
-            print("  12. Recordatorios Inteligentes Predictivos")
-            print("  13. Análisis Completo de Servicios")
-            print("  14. Reporte Proactivo para Clientes")
-            
-            print("\n  0. Salir del Sistema")
-            print("="*50)
-            
-            opcion = input("\nSelecciona una opción: ").strip()
-            
-            # Opción 1: Nuevo Cliente + Vehículos
-            if opcion == "1":
-                print("\n👤 REGISTRAR NUEVO CLIENTE Y VEHÍCULOS")
-                nombre = input("Nombre del cliente: ").strip()
-                if not nombre:
-                    print("❌ El nombre del cliente es obligatorio.")
-                    continue
+                telefono = None
+                if telefono_var.get().strip():
+                    telefono = self.taller.validator.validar_telefono(telefono_var.get())
+                    if not telefono:
+                        messagebox.showerror("Error", "Teléfono inválido")
+                        return
                 
-                telefono = taller.pedir_telefono_con_reintentos("Teléfono del cliente (opcional): ", obligatorio=False)
-                if telefono is None and input("¿Continuar sin teléfono? (s/n): ").lower() != 's':
-                    continue
+                nit = None
+                if nit_var.get().strip():
+                    nit = self.taller.validator.validar_nit(nit_var.get())
+                    if not nit:
+                        messagebox.showerror("Error", "NIT inválido")
+                        return
                 
-                nit = taller.pedir_nit_con_reintentos("NIT del cliente (opcional): ", obligatorio=False)
-                
-                cliente_id = taller.clientes.agregar_cliente(nombre, telefono, nit)
-                if cliente_id is None:
-                    continue
-                
-                while True:
-                    print(f"\n🚗 AGREGAR VEHÍCULO PARA {nombre}")
-                    marca = input("Marca del vehículo: ").strip()
-                    modelo = input("Línea del vehículo: ").strip()
-                    
-                    año = taller.pedir_numero_con_reintentos("Año del vehículo: ", "entero")
-                    if año is None:
-                        continue
-                    
-                    if not taller.validator.validar_año_vehiculo(año):
-                        print("❌ Año del vehículo inválido.")
-                        continue
-                    
-                    placa = input("Placa del vehículo: ").strip().upper()
-                    if not placa:
-                        print("❌ La placa es obligatoria.")
-                        continue
-                    
-                    if taller.vehiculos.placa_existe(placa):
-                        print("❌ Ya existe un vehículo con esa placa.")
-                        continue
-                    
-                    color = input("Color del vehículo (opcional): ").strip()
-                    
-                    resultado = taller.vehiculos.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color)
-                    print(resultado)
-                    
-                    if input("\n¿Agregar otro vehículo? (s/n): ").lower() != 's':
-                        break
-
-            # Opción 2: Nuevo Empleado
-            elif opcion == "2":
-                print("\n👷 REGISTRAR NUEVO EMPLEADO")
-                nombre = input("Nombre del empleado: ").strip()
-                if not nombre:
-                    print("❌ El nombre del empleado es obligatorio.")
-                    continue
-                
-                telefono = taller.pedir_telefono_con_reintentos("Teléfono del empleado: ", obligatorio=True)
-                if telefono is None:
-                    continue
-                
-                resultado = taller.empleados.agregar_empleado(nombre, telefono)
-                print(resultado)
-
-            # Opción 3: Nueva Orden de Trabajo
-            elif opcion == "3":
-                print("\n📋 NUEVA ORDEN DE TRABAJO")
-                
-                cliente_id = taller.seleccionar_cliente_interactivo()
-                if cliente_id is None:
-                    continue
-                
-                vehiculo_id = taller.seleccionar_vehiculo_interactivo(cliente_id)
-                if vehiculo_id is None:
-                    continue
-                
-                empleado_id = taller.pedir_empleado_id_con_reintentos()
-                if empleado_id is None:
-                    continue
-                
-                numero_orden = taller.pedir_numero_con_reintentos("Número de orden: ", "entero")
-                if numero_orden is None:
-                    continue
-                
-                descripcion = input("Descripción del trabajo: ").strip()
-                if not descripcion:
-                    print("❌ La descripción es obligatoria.")
-                    continue
-                
-                tipo_servicio = input("Tipo de servicio: ").strip()
-                if not tipo_servicio:
-                    print("❌ El tipo de servicio es obligatorio.")
-                    continue
-                
-                horas = taller.pedir_numero_con_reintentos("Horas trabajadas: ", "decimal")
-                if horas is None:
-                    continue
-                
-                costo_repuestos = taller.pedir_numero_con_reintentos("Costo de repuestos (Q): ", "decimal")
-                if costo_repuestos is None:
-                    continue
-                
-                costo_mano_obra = taller.pedir_numero_con_reintentos("Costo de mano de obra (Q): ", "decimal")
-                if costo_mano_obra is None:
-                    continue
-                
-                kilometraje = taller.pedir_numero_con_reintentos("Kilometraje del vehículo: ", "decimal")
-                if kilometraje is None:
-                    continue
-                
-                unidad_km = input("Unidad de kilometraje (km/millas) [km]: ").strip() or "km"
-                
-                fecha_fin = input("Fecha de finalización (YYYY-MM-DD o Enter para hoy): ").strip()
-                
-                resultado = taller.ordenes.agregar_orden(
-                    numero_orden, vehiculo_id, empleado_id, descripcion, tipo_servicio,
-                    horas, costo_repuestos, costo_mano_obra, kilometraje, unidad_km, fecha_fin
+                # Agregar cliente
+                cliente_id = self.taller.clientes.agregar_cliente(
+                    nombre_var.get().strip(),
+                    telefono,
+                    nit
                 )
-                print(resultado)
-
-            # Opción 4: Añadir Vehículo a Cliente Existente
-            elif opcion == "4":
-                print("\n🚗 AÑADIR VEHÍCULO A CLIENTE EXISTENTE")
                 
-                cliente_id = taller.seleccionar_cliente_interactivo()
-                if cliente_id is None:
-                    continue
+                self.show_message(f"✅ Cliente registrado exitosamente\nID: {cliente_id}")
+                dialog.destroy()
                 
-                marca = input("Marca del vehículo: ").strip()
-                modelo = input("Línea del vehículo: ").strip()
-                
-                año = taller.pedir_numero_con_reintentos("Año del vehículo: ", "entero")
-                if año is None:
-                    continue
-                
-                if not taller.validator.validar_año_vehiculo(año):
-                    print("❌ Año del vehículo inválido.")
-                    continue
-                
-                placa = input("Placa del vehículo: ").strip().upper()
-                if not placa:
-                    print("❌ La placa es obligatoria.")
-                    continue
-                
-                if taller.vehiculos.placa_existe(placa):
-                    print("❌ Ya existe un vehículo con esa placa.")
-                    continue
-                
-                color = input("Color del vehículo (opcional): ").strip()
-                
-                resultado = taller.vehiculos.agregar_vehiculo(cliente_id, marca, modelo, año, placa, color)
-                print(resultado)
-
-            # Opción 5: Buscar y Ver Cliente
-            elif opcion == "5":
-                print("\n🔍 BUSCAR Y VER CLIENTE")
-                cliente_id = taller.seleccionar_cliente_interactivo()
-                if cliente_id is None:
-                    continue
-                
-                detalles = taller.clientes.detalles_cliente(cliente_id)
-                if detalles:
-                    cliente_info, vehiculos = detalles['cliente'], detalles['vehiculos']
-                    print(f"\n📋 DETALLES DEL CLIENTE:")
-                    print(f"   👤 Nombre: {cliente_info[0]}")
-                    print(f"   📞 Teléfono: {cliente_info[1] or 'No tiene'}")
-                    print(f"   🏢 NIT: {cliente_info[2] or 'No tiene'}")
-                    
-                    if vehiculos:
-                        print(f"\n🚗 VEHÍCULOS ({len(vehiculos)}):")
-                        for i, vehiculo in enumerate(vehiculos, 1):
-                            print(f"   {i}. {vehiculo[1]} {vehiculo[2]} {vehiculo[3]} - Placa: {vehiculo[4]} - Color: {vehiculo[5] or 'No especificado'}")
-                    else:
-                        print("\n❌ Este cliente no tiene vehículos registrados.")
-                else:
-                    print("❌ No se pudieron obtener los detalles del cliente.")
-
-            # Opción 6: Ver Historial por Vehículo
-            elif opcion == "6":
-                print("\n🚗 VER HISTORIAL POR VEHÍCULO")
-                cliente_id = taller.seleccionar_cliente_interactivo()
-                if cliente_id is None:
-                    continue
-                
-                vehiculo_id = taller.seleccionar_vehiculo_interactivo(cliente_id)
-                if vehiculo_id is None:
-                    continue
-                
-                detalles = taller.vehiculos.detalles_vehiculo(vehiculo_id)
-                if detalles:
-                    vehiculo_info, ordenes = detalles['vehiculo'], detalles['ordenes']
-                    print(f"\n📋 DETALLES DEL VEHÍCULO:")
-                    print(f"   🚗 Vehículo: {vehiculo_info[0]} {vehiculo_info[1]} {vehiculo_info[2]}")
-                    print(f"   🏷️  Placa: {vehiculo_info[3]}")
-                    print(f"   🎨 Color: {vehiculo_info[4] or 'No especificado'}")
-                    print(f"   👤 Cliente: {vehiculo_info[5]} - 📞 {vehiculo_info[6] or 'No tiene'} - 🏢 {vehiculo_info[7] or 'No tiene'}")
-                    
-                    if ordenes:
-                        print(f"\n🔧 HISTORIAL DE ÓRDENES ({len(ordenes)}):")
-                        for orden in ordenes:
-                            print(f"\n   📋 Orden #{orden[0]}")
-                            print(f"      📅 Fecha: {orden[1]} a {orden[2] or 'En progreso'}")
-                            print(f"      🔧 Servicio: {orden[4]}")
-                            print(f"      💰 Precio: Q{orden[5]:.2f}")
-                            print(f"      🛣️  Kilometraje: {orden[6]} {orden[7]}")
-                            print(f"      👷 Empleado: {orden[8] or 'No asignado'}")
-                            print(f"      📝 Descripción: {orden[3]}")
-                            print("      " + "-" * 40)
-                    else:
-                        print("\n❌ Este vehículo no tiene órdenes de trabajo.")
-                else:
-                    print("❌ No se pudieron obtener los detalles del vehículo.")
-
-            # Opción 7: Buscar Orden por ID
-            elif opcion == "7":
-                print("\n🔍 BUSCAR ORDEN POR ID")
-                orden_id = taller.pedir_numero_con_reintentos("ID de la orden: ", "entero")
-                if orden_id is None:
-                    continue
-                
-                detalles = taller.ordenes.obtener_detalles_orden(orden_id)
-                if detalles:
-                    print(f"\n📋 DETALLES DE ORDEN #{detalles['id']}:")
-                    print(f"   🚗 Vehículo: {detalles['vehiculo_marca']} {detalles['vehiculo_modelo']} {detalles['vehiculo_año']}")
-                    print(f"   🏷️  Placa: {detalles['vehiculo_placa']}")
-                    print(f"   👤 Cliente: {detalles['cliente_nombre']} - 📞 {detalles['cliente_telefono'] or 'No tiene'} - 🏢 {detalles['cliente_nit'] or 'No tiene'}")
-                    print(f"   👷 Empleado: {detalles['empleado_nombre'] or 'No asignado'}")
-                    print(f"   📅 Fechas: {detalles['fecha_inicio']} a {detalles['fecha_fin']}")
-                    print(f"   🔧 Tipo servicio: {detalles['tipo_servicio']}")
-                    print(f"   ⏱️  Horas trabajadas: {detalles['horas_trabajadas']}")
-                    print(f"   💰 Costo repuestos: Q{detalles['costo_repuestos']:.2f}")
-                    print(f"   💰 Costo mano obra: Q{detalles['costo_mano_obra']:.2f}")
-                    print(f"   💰 Precio final: Q{detalles['precio_final']:.2f}")
-                    print(f"   🛣️  Kilometraje: {detalles['kilometraje']} {detalles['unidad_kilometraje']}")
-                    print(f"   📝 Descripción: {detalles['descripcion_trabajo']}")
-                else:
-                    print("❌ No se encontró la orden con ese ID.")
-
-            # Opción 8: Editar Cliente
-            elif opcion == "8":
-                print("\n✏️ EDITAR CLIENTE")
-                cliente_id = taller.seleccionar_cliente_interactivo()
-                if cliente_id is None:
-                    continue
-                
-                nuevo_nombre = input("Nuevo nombre del cliente: ").strip()
-                if not nuevo_nombre:
-                    print("❌ El nombre no puede estar vacío.")
-                    continue
-                
-                nuevo_telefono = taller.pedir_telefono_con_reintentos("Nuevo teléfono (opcional): ", obligatorio=False)
-                nuevo_nit = taller.pedir_nit_con_reintentos("Nuevo NIT (opcional): ", obligatorio=False)
-                
-                resultado = taller.clientes.editar_cliente(cliente_id, nuevo_nombre, nuevo_telefono, nuevo_nit)
-                print(resultado)
-
-            # Opción 9: Editar Empleado
-            elif opcion == "9":
-                print("\n✏️ EDITAR EMPLEADO")
-                empleado_id = taller.pedir_numero_con_reintentos("ID del empleado a editar: ", "entero")
-                if empleado_id is None:
-                    continue
-                
-                if not taller.empleados.empleado_existe(empleado_id):
-                    print("❌ No existe un empleado con ese ID.")
-                    continue
-                
-                nuevo_nombre = input("Nuevo nombre del empleado: ").strip()
-                if not nuevo_nombre:
-                    print("❌ El nombre no puede estar vacío.")
-                    continue
-                
-                nuevo_telefono = taller.pedir_telefono_con_reintentos("Nuevo teléfono del empleado: ", obligatorio=True)
-                if nuevo_telefono is None:
-                    continue
-                
-                resultado = taller.empleados.editar_empleado(empleado_id, nuevo_nombre, nuevo_telefono)
-                print(resultado)
-
-            # Opción 10: Editar Orden
-            elif opcion == "10":
-                print("\n✏️ EDITAR ORDEN")
-                orden_id = taller.pedir_numero_con_reintentos("ID de la orden a editar: ", "entero")
-                if orden_id is None:
-                    continue
-                
-                if not taller.ordenes.orden_existe(orden_id):
-                    print("❌ No existe una orden con ese ID.")
-                    continue
-                
-                nueva_descripcion = input("Nueva descripción del trabajo: ").strip()
-                if not nueva_descripcion:
-                    print("❌ La descripción no puede estar vacía.")
-                    continue
-                
-                nuevo_precio = taller.pedir_numero_con_reintentos("Nuevo precio final (Q): ", "decimal")
-                if nuevo_precio is None:
-                    continue
-                
-                nuevo_tipo = input("Nuevo tipo de servicio: ").strip()
-                if not nuevo_tipo:
-                    print("❌ El tipo de servicio no puede estar vacío.")
-                    continue
-                
-                nuevo_km = taller.pedir_numero_con_reintentos("Nuevo kilometraje: ", "decimal")
-                if nuevo_km is None:
-                    continue
-                
-                resultado = taller.ordenes.editar_orden(orden_id, nueva_descripcion, nuevo_precio, nuevo_tipo, nuevo_km)
-                print(resultado)
-
-            # Opción 11: Ver Reportes Avanzados
-            elif opcion == "11":
-                print("\n📊 REPORTES AVANZADOS")
-                print("  1. Reporte Semanal")
-                print("  2. Reporte Mensual")
-                print("  3. Reporte Anual")
-                print("  4. Reporte Histórico por Año")
-                print("  5. Proyección de Crecimiento")
-                print("  6. Predicción de Alta Demanda")
-                
-                sub_opcion = input("\nSelecciona tipo de reporte: ").strip()
-                
-                if sub_opcion == "1":
-                    reporte = taller.reportes.reporte_periodo('semana')
-                    mostrar_reporte(reporte, taller)
-                elif sub_opcion == "2":
-                    reporte = taller.reportes.reporte_periodo('mes')
-                    mostrar_reporte(reporte, taller)
-                elif sub_opcion == "3":
-                    reporte = taller.reportes.reporte_periodo('año')
-                    mostrar_reporte(reporte, taller)
-                elif sub_opcion == "4":
-                    año = taller.pedir_numero_con_reintentos("Año para el reporte histórico: ", "entero")
-                    if año is not None:
-                        reporte = taller.reportes.reporte_periodo_historico(año)
-                        mostrar_reporte(reporte, taller)
-                elif sub_opcion == "5":
-                    proyeccion = taller.reportes.proyeccion_crecimiento()
-                    if proyeccion:
-                        print(f"\n📈 PROYECCIÓN DE CRECIMIENTO:")
-                        print(f"   📊 Crecimiento promedio: {proyeccion['crecimiento_promedio']*100:.1f}% mensual")
-                        print(f"\n   🔮 PROYECCIONES PRÓXIMOS 6 MESES:")
-                        for mes, ingreso in proyeccion['proyecciones']:
-                            print(f"      {mes}: Q{ingreso:.2f}")
-                        
-                        if input("\n¿Generar gráfica? (s/n): ").lower() == 's':
-                            taller.reportes.crear_grafica_proyeccion(proyeccion, f"proyeccion_crecimiento_{datetime.now().strftime('%Y%m%d')}")
-                    else:
-                        print("❌ No hay suficientes datos para generar proyecciones.")
-                elif sub_opcion == "6":
-                    prediccion = taller.reportes.predecir_alta_demanda()
-                    print(f"\n🎯 PREDICCIÓN DE ALTA DEMANDA:")
-                    print(f"   📅 MESES CON MAYOR DEMANDA HISTÓRICA:")
-                    for i, mes_data in enumerate(prediccion['meses_alta_demanda'], 1):
-                        print(f"      {i}. {mes_data['mes']}: {mes_data['trabajos']} trabajos (Q{mes_data['precio_promedio']:.2f} promedio)")
-                else:
-                    print("❌ Opción de reporte no válida.")
-
-            # Opción 12: Recordatorios Inteligentes
-            elif opcion == "12":
-                taller.menu_recordatorios_inteligentes()
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        # Formulario
+        ttk.Label(dialog, text="👤 REGISTRAR NUEVO CLIENTE", font=("Arial", 12, "bold")).pack(pady=20)
+        
+        ttk.Label(dialog, text="Nombre completo:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=nombre_var, width=40).pack(pady=5)
+        
+        ttk.Label(dialog, text="Teléfono (opcional):").pack(pady=5)
+        ttk.Entry(dialog, textvariable=telefono_var, width=40).pack(pady=5)
+        
+        ttk.Label(dialog, text="NIT (opcional):").pack(pady=5)
+        ttk.Entry(dialog, textvariable=nit_var, width=40).pack(pady=5)
+        
+        ttk.Button(dialog, text="Guardar", command=guardar).pack(pady=20)
+    
+    def registrar_vehiculo(self):
+        """Registra un nuevo vehículo para un cliente existente"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Registrar Nuevo Vehículo")
+        dialog.geometry("500x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Variables
+        cliente_id_var = tk.StringVar()
+        marca_var = tk.StringVar()
+        modelo_var = tk.StringVar()
+        año_var = tk.StringVar()
+        placa_var = tk.StringVar()
+        color_var = tk.StringVar()
+        
+        def buscar_cliente():
+            search_dialog = tk.Toplevel(dialog)
+            search_dialog.title("Buscar Cliente")
+            search_dialog.geometry("500x400")
             
-            # Opción 13: Análisis Completo de Servicios
-            elif opcion == "13":
-                taller.analizar_todos_los_servicios()
+            ttk.Label(search_dialog, text="Buscar cliente por nombre:").pack(pady=10)
+            search_var = tk.StringVar()
+            ttk.Entry(search_dialog, textvariable=search_var, width=40).pack(pady=5)
             
-            # Opción 14: Reporte Proactivo para Clientes
-            elif opcion == "14":
-                taller.generar_reporte_proactivo()
+            listbox = tk.Listbox(search_dialog, width=60, height=15)
+            scrollbar = ttk.Scrollbar(search_dialog)
+            listbox.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=listbox.yview)
             
-            # Opción 0: Salir
-            elif opcion == "0":
-                print("\n👋 ¡Gracias por usar el Sistema de Gestión del Taller SEYMO!")
-                print("¡Hasta pronto! 🚗💨")
-                break
+            def perform_search():
+                listbox.delete(0, tk.END)
+                clientes = self.taller.clientes.buscar_cliente_por_nombre(search_var.get())
+                for cliente in clientes:
+                    listbox.insert(tk.END, f"ID: {cliente[0]} | Nombre: {cliente[1]} | Tel: {cliente[2] or 'N/A'} | NIT: {cliente[3] or 'N/A'}")
+            
+            def seleccionar():
+                seleccion = listbox.curselection()
+                if seleccion:
+                    texto = listbox.get(seleccion[0])
+                    cliente_id = int(texto.split("ID: ")[1].split(" |")[0])
+                    cliente_id_var.set(str(cliente_id))
+                    search_dialog.destroy()
+            
+            ttk.Button(search_dialog, text="Buscar", command=perform_search).pack(pady=5)
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+            ttk.Button(search_dialog, text="Seleccionar", command=seleccionar).pack(pady=10)
+        
+        def guardar():
+            try:
+                # Validar datos
+                if not cliente_id_var.get().strip():
+                    messagebox.showerror("Error", "Debe seleccionar un cliente")
+                    return
+                
+                if not marca_var.get().strip():
+                    messagebox.showerror("Error", "La marca es obligatoria")
+                    return
+                
+                if not modelo_var.get().strip():
+                    messagebox.showerror("Error", "El modelo es obligatorio")
+                    return
+                
+                if not año_var.get().strip():
+                    messagebox.showerror("Error", "El año es obligatorio")
+                    return
+                
+                año = int(año_var.get())
+                if not self.taller.validator.validar_año_vehiculo(año):
+                    messagebox.showerror("Error", "Año del vehículo inválido")
+                    return
+                
+                if not placa_var.get().strip():
+                    messagebox.showerror("Error", "La placa es obligatoria")
+                    return
+                
+                placa = placa_var.get().strip().upper()
+                if self.taller.vehiculos.placa_existe(placa):
+                    messagebox.showerror("Error", "Ya existe un vehículo con esa placa")
+                    return
+                
+                # Agregar vehículo
+                resultado = self.taller.vehiculos.agregar_vehiculo(
+                    int(cliente_id_var.get()),
+                    marca_var.get().strip(),
+                    modelo_var.get().strip(),
+                    año,
+                    placa,
+                    color_var.get().strip() or None
+                )
+                
+                self.show_message(resultado)
+                dialog.destroy()
+                
+            except ValueError:
+                messagebox.showerror("Error", "El año debe ser un número válido")
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        # Formulario
+        ttk.Label(dialog, text="🚗 REGISTRAR NUEVO VEHÍCULO", font=("Arial", 12, "bold")).pack(pady=10)
+        
+        # Cliente
+        frame_cliente = ttk.LabelFrame(dialog, text="Cliente")
+        frame_cliente.pack(fill=tk.X, padx=20, pady=5)
+        ttk.Label(frame_cliente, text="ID Cliente:").pack(side=tk.LEFT, padx=5)
+        ttk.Entry(frame_cliente, textvariable=cliente_id_var, width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_cliente, text="Buscar Cliente", command=buscar_cliente).pack(side=tk.LEFT, padx=5)
+        
+        # Datos del vehículo
+        ttk.Label(dialog, text="Marca:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=marca_var, width=40).pack(pady=5)
+        
+        ttk.Label(dialog, text="Modelo:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=modelo_var, width=40).pack(pady=5)
+        
+        ttk.Label(dialog, text="Año:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=año_var, width=40).pack(pady=5)
+        
+        ttk.Label(dialog, text="Placa:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=placa_var, width=40).pack(pady=5)
+        
+        ttk.Label(dialog, text="Color (opcional):").pack(pady=5)
+        ttk.Entry(dialog, textvariable=color_var, width=40).pack(pady=5)
+        
+        ttk.Button(dialog, text="Guardar Vehículo", command=guardar).pack(pady=20)
+    
+    def registrar_empleado(self):
+        """Registra un nuevo empleado"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Registrar Nuevo Empleado")
+        dialog.geometry("400x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Variables
+        nombre_var = tk.StringVar()
+        telefono_var = tk.StringVar()
+        
+        def guardar():
+            try:
+                if not nombre_var.get().strip():
+                    messagebox.showerror("Error", "El nombre del empleado es obligatorio")
+                    return
+                
+                telefono = self.taller.validator.validar_telefono(telefono_var.get())
+                if not telefono:
+                    messagebox.showerror("Error", "Teléfono inválido (7-15 dígitos)")
+                    return
+                
+                resultado = self.taller.empleados.agregar_empleado(
+                    nombre_var.get().strip(),
+                    telefono
+                )
+                
+                self.show_message(resultado)
+                dialog.destroy()
+                
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        # Formulario
+        ttk.Label(dialog, text="👷 REGISTRAR NUEVO EMPLEADO", font=("Arial", 12, "bold")).pack(pady=20)
+        
+        ttk.Label(dialog, text="Nombre completo:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=nombre_var, width=40).pack(pady=5)
+        
+        ttk.Label(dialog, text="Teléfono:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=telefono_var, width=40).pack(pady=5)
+        
+        ttk.Button(dialog, text="Guardar", command=guardar).pack(pady=20)
+    
+    def nueva_orden(self):
+        """Crea una nueva orden de trabajo - VERSIÓN CORREGIDA"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Nueva Orden de Trabajo")
+        dialog.geometry("650x700")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Variables
+        orden_var = tk.StringVar()
+        descripcion_var = tk.StringVar()
+        tipo_servicio_var = tk.StringVar()
+        horas_var = tk.StringVar()
+        repuestos_var = tk.StringVar()
+        mano_obra_var = tk.StringVar()
+        kilometraje_var = tk.StringVar()
+        unidad_km_var = tk.StringVar(value="km")
+        
+        # Variables para seguimiento
+        cliente_id = None
+        vehiculo_id = None
+        empleado_id = None
+        
+        # Frame principal usando pack
+        main_content = tk.Frame(dialog)
+        main_content.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Título
+        tk.Label(main_content, text="📋 NUEVA ORDEN DE TRABAJO", 
+                font=("Arial", 12, "bold")).pack(pady=10)
+        
+        # Frame para selecciones usando grid internamente
+        frame_selecciones = tk.LabelFrame(main_content, text="Selecciones")
+        frame_selecciones.pack(fill=tk.X, pady=10, padx=5)
+        
+        # Variables para labels de estado
+        cliente_label = tk.Label(frame_selecciones, text="Cliente: No seleccionado", anchor="w")
+        vehiculo_label = tk.Label(frame_selecciones, text="Vehículo: No seleccionado", anchor="w")
+        empleado_label = tk.Label(frame_selecciones, text="Empleado: No seleccionado", anchor="w")
+        
+        def buscar_cliente():
+            nonlocal cliente_id
+            search_dialog = tk.Toplevel(dialog)
+            search_dialog.title("Buscar Cliente")
+            search_dialog.geometry("500x400")
+            
+            ttk.Label(search_dialog, text="Buscar cliente por nombre:").pack(pady=10)
+            search_var = tk.StringVar()
+            ttk.Entry(search_dialog, textvariable=search_var, width=40).pack(pady=5)
+            
+            listbox = tk.Listbox(search_dialog, width=60, height=15)
+            scrollbar = ttk.Scrollbar(search_dialog)
+            listbox.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=listbox.yview)
+            
+            def perform_search():
+                listbox.delete(0, tk.END)
+                clientes = self.taller.clientes.buscar_cliente_por_nombre(search_var.get())
+                for cliente in clientes:
+                    listbox.insert(tk.END, f"ID: {cliente[0]} | Nombre: {cliente[1]} | Tel: {cliente[2] or 'N/A'}")
+            
+            def seleccionar():
+                nonlocal cliente_id, vehiculo_id
+                seleccion = listbox.curselection()
+                if seleccion:
+                    texto = listbox.get(seleccion[0])
+                    cliente_id = int(texto.split("ID: ")[1].split(" |")[0])
+                    cliente_label.config(text=f"Cliente: ID {cliente_id} seleccionado")
+                    # Resetear vehículo cuando se cambia de cliente
+                    vehiculo_id = None
+                    vehiculo_label.config(text="Vehículo: No seleccionado")
+                    search_dialog.destroy()
+            
+            ttk.Button(search_dialog, text="Buscar", command=perform_search).pack(pady=5)
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+            ttk.Button(search_dialog, text="Seleccionar", command=seleccionar).pack(pady=10)
+        
+        def seleccionar_vehiculo():
+            nonlocal vehiculo_id
+            if not cliente_id:
+                messagebox.showwarning("Advertencia", "Primero seleccione un cliente")
+                return
+            
+            vehiculos = self.taller.vehiculos.obtener_vehiculos_cliente(cliente_id)
+            
+            if not vehiculos:
+                messagebox.showinfo("Información", "Este cliente no tiene vehículos registrados")
+                return
+            
+            search_dialog = tk.Toplevel(dialog)
+            search_dialog.title("Seleccionar Vehículo")
+            search_dialog.geometry("500x400")
+            
+            listbox = tk.Listbox(search_dialog, width=60, height=15)
+            scrollbar = ttk.Scrollbar(search_dialog)
+            listbox.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=listbox.yview)
+            
+            for vehiculo in vehiculos:
+                listbox.insert(tk.END, f"ID: {vehiculo[0]} | {vehiculo[1]} {vehiculo[2]} {vehiculo[3]} | Placa: {vehiculo[4]}")
+            
+            def seleccionar():
+                nonlocal vehiculo_id
+                seleccion = listbox.curselection()
+                if seleccion:
+                    texto = listbox.get(seleccion[0])
+                    vehiculo_id = int(texto.split("ID: ")[1].split(" |")[0])
+                    vehiculo_label.config(text=f"Vehículo: ID {vehiculo_id} seleccionado")
+                    search_dialog.destroy()
+            
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+            ttk.Button(search_dialog, text="Seleccionar", command=seleccionar).pack(pady=10)
+        
+        def seleccionar_empleado():
+            nonlocal empleado_id
+            empleados = self.taller.empleados.listar_empleados()
+            
+            if not empleados:
+                messagebox.showinfo("Información", "No hay empleados registrados")
+                return
+            
+            search_dialog = tk.Toplevel(dialog)
+            search_dialog.title("Seleccionar Empleado")
+            search_dialog.geometry("500x400")
+            
+            listbox = tk.Listbox(search_dialog, width=60, height=15)
+            scrollbar = ttk.Scrollbar(search_dialog)
+            listbox.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=listbox.yview)
+            
+            for empleado in empleados:
+                listbox.insert(tk.END, f"ID: {empleado[0]} | {empleado[1]} | Tel: {empleado[2]}")
+            
+            def seleccionar():
+                nonlocal empleado_id
+                seleccion = listbox.curselection()
+                if seleccion:
+                    texto = listbox.get(seleccion[0])
+                    empleado_id = int(texto.split("ID: ")[1].split(" |")[0])
+                    empleado_label.config(text=f"Empleado: ID {empleado_id} seleccionado")
+                    search_dialog.destroy()
+            
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+            ttk.Button(search_dialog, text="Seleccionar", command=seleccionar).pack(pady=10)
+        
+        def guardar():
+            try:
+                # Validaciones
+                if not cliente_id:
+                    messagebox.showerror("Error", "Debe seleccionar un cliente")
+                    return
+                
+                if not vehiculo_id:
+                    messagebox.showerror("Error", "Debe seleccionar un vehículo")
+                    return
+                
+                if not empleado_id:
+                    messagebox.showerror("Error", "Debe seleccionar un empleado")
+                    return
+                
+                if not orden_var.get().strip():
+                    messagebox.showerror("Error", "El número de orden es obligatorio")
+                    return
+                
+                try:
+                    numero_orden = int(orden_var.get())
+                except ValueError:
+                    messagebox.showerror("Error", "El número de orden debe ser un número")
+                    return
+                
+                # Validar que el número de orden no exista ya
+                if self.taller.ordenes.orden_existe(numero_orden):
+                    respuesta = messagebox.askyesno(
+                        "Orden existente", 
+                        f"La orden #{numero_orden} ya existe. ¿Desea usar un número diferente?"
+                    )
+                    if not respuesta:
+                        return
+                    messagebox.showinfo("Información", "Por favor use un número de orden diferente")
+                    return
+                
+                descripcion = descripcion_var.get().strip()
+                if not descripcion:
+                    messagebox.showerror("Error", "La descripción es obligatoria")
+                    return
+                
+                tipo_servicio = tipo_servicio_var.get().strip()
+                if not tipo_servicio:
+                    messagebox.showerror("Error", "El tipo de servicio es obligatorio")
+                    return
+                
+                try:
+                    horas = float(horas_var.get() or 0)
+                    repuestos = float(repuestos_var.get() or 0)
+                    mano_obra = float(mano_obra_var.get() or 0)
+                    kilometraje = float(kilometraje_var.get() or 0)
+                except ValueError:
+                    messagebox.showerror("Error", "Los valores numéricos deben ser válidos")
+                    return
+                
+                unidad_km = unidad_km_var.get().strip() or "km"
+                
+                # Agregar orden
+                resultado = self.taller.ordenes.agregar_orden(
+                    numero_orden,
+                    vehiculo_id,
+                    empleado_id,
+                    descripcion,
+                    tipo_servicio,
+                    horas,
+                    repuestos,
+                    mano_obra,
+                    kilometraje,
+                    unidad_km
+                )
+                
+                self.show_message(resultado)
+                dialog.destroy()
+                
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        # Usar grid dentro del LabelFrame (esto está permitido)
+        tk.Button(frame_selecciones, text="1. Seleccionar Cliente", 
+                  command=buscar_cliente).grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        cliente_label.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        
+        tk.Button(frame_selecciones, text="2. Seleccionar Vehículo", 
+                  command=seleccionar_vehiculo).grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        vehiculo_label.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        
+        tk.Button(frame_selecciones, text="3. Seleccionar Empleado", 
+                  command=seleccionar_empleado).grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        empleado_label.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+        
+        # Campos de la orden usando pack
+        fields_frame = tk.Frame(main_content)
+        fields_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+        # Crear todos los campos usando pack
+        fields = [
+            ("Número de orden:", orden_var),
+            ("Descripción del trabajo:", descripcion_var),
+            ("Tipo de servicio:", tipo_servicio_var),
+            ("Horas trabajadas:", horas_var),
+            ("Costo repuestos (Q):", repuestos_var),
+            ("Costo mano de obra (Q):", mano_obra_var),
+            ("Kilometraje:", kilometraje_var),
+            ("Unidad kilometraje:", unidad_km_var)
+        ]
+        
+        for label_text, var in fields:
+            frame = tk.Frame(fields_frame)
+            frame.pack(fill=tk.X, pady=5)
+            tk.Label(frame, text=label_text, width=25, anchor="w").pack(side=tk.LEFT, padx=5)
+            tk.Entry(frame, textvariable=var, width=30).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # Botón de guardar
+        tk.Button(main_content, text="Guardar Orden", command=guardar, 
+                  bg="#4CAF50", fg="white", padx=20, pady=10, font=("Arial", 10, "bold")).pack(pady=20)
+    
+    def buscar_cliente(self):
+        """Busca y muestra información de un cliente"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Buscar Cliente")
+        dialog.geometry("600x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        search_var = tk.StringVar()
+        resultados_text = scrolledtext.ScrolledText(dialog, height=25, width=70)
+        
+        def buscar():
+            resultados_text.delete(1.0, tk.END)
+            clientes = self.taller.clientes.buscar_cliente_por_nombre(search_var.get())
+            
+            if not clientes:
+                resultados_text.insert(tk.END, "❌ No se encontraron clientes")
+                return
+            
+            for cliente in clientes:
+                resultados_text.insert(tk.END, f"\n{'═'*60}\n")
+                resultados_text.insert(tk.END, f"📋 ID: {cliente[0]}\n")
+                resultados_text.insert(tk.END, f"👤 Nombre: {cliente[1]}\n")
+                resultados_text.insert(tk.END, f"📞 Teléfono: {cliente[2] or 'No tiene'}\n")
+                resultados_text.insert(tk.END, f"🏢 NIT: {cliente[3] or 'No tiene'}\n")
+                
+                # Mostrar vehículos del cliente
+                vehiculos = self.taller.vehiculos.obtener_vehiculos_cliente(cliente[0])
+                if vehiculos:
+                    resultados_text.insert(tk.END, f"\n🚗 VEHÍCULOS ({len(vehiculos)}):\n")
+                    for vehiculo in vehiculos:
+                        resultados_text.insert(tk.END, f"   • {vehiculo[1]} {vehiculo[2]} {vehiculo[3]} - Placa: {vehiculo[4]}\n")
+                else:
+                    resultados_text.insert(tk.END, "\n❌ Este cliente no tiene vehículos registrados.\n")
+            
+            resultados_text.insert(tk.END, f"\n{'═'*60}\n")
+        
+        ttk.Label(dialog, text="🔍 BUSCAR CLIENTE", font=("Arial", 12, "bold")).pack(pady=10)
+        
+        ttk.Label(dialog, text="Nombre del cliente:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=search_var, width=40).pack(pady=5)
+        
+        ttk.Button(dialog, text="Buscar", command=buscar).pack(pady=10)
+        
+        resultados_text.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
+    
+    def historial_vehiculo(self):
+        """Muestra el historial de un vehículo - VERSIÓN CORREGIDA"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Historial de Vehículo")
+        dialog.geometry("700x600")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Variables
+        placa_var = tk.StringVar()
+        resultados_text = scrolledtext.ScrolledText(dialog, height=30, width=80)
+        
+        def buscar_por_placa():
+            resultados_text.delete(1.0, tk.END)
+            placa = placa_var.get().strip().upper()
+            
+            if not placa:
+                resultados_text.insert(tk.END, "❌ Ingrese una placa para buscar")
+                return
+            
+            # Buscar vehículo por placa
+            cursor = self.taller.db.execute_query(
+                'SELECT id FROM vehiculos WHERE placa = ?', 
+                (placa,)
+            )
+            resultado = cursor.fetchone()
+            
+            if not resultado:
+                resultados_text.insert(tk.END, f"❌ No se encontró vehículo con placa: {placa}")
+                return
+            
+            vehiculo_id = resultado[0]
+            
+            # Obtener detalles del vehículo
+            detalles = self.taller.vehiculos.detalles_vehiculo(vehiculo_id)
+            
+            if not detalles:
+                resultados_text.insert(tk.END, f"❌ Error al obtener detalles del vehículo")
+                return
+            
+            vehiculo_info, ordenes = detalles['vehiculo'], detalles['ordenes']
+            
+            # Mostrar información del vehículo
+            resultados_text.insert(tk.END, f"\n{'═'*60}\n")
+            resultados_text.insert(tk.END, f"🚗 DETALLES DEL VEHÍCULO\n")
+            resultados_text.insert(tk.END, f"{'═'*60}\n\n")
+            resultados_text.insert(tk.END, f"📋 Marca: {vehiculo_info[0]}\n")
+            resultados_text.insert(tk.END, f"📋 Modelo: {vehiculo_info[1]}\n")
+            resultados_text.insert(tk.END, f"📅 Año: {vehiculo_info[2]}\n")
+            resultados_text.insert(tk.END, f"🏷️  Placa: {vehiculo_info[3]}\n")
+            resultados_text.insert(tk.END, f"🎨 Color: {vehiculo_info[4] or 'No especificado'}\n")
+            resultados_text.insert(tk.END, f"👤 Cliente: {vehiculo_info[5]}\n")
+            resultados_text.insert(tk.END, f"📞 Teléfono: {vehiculo_info[6] or 'No tiene'}\n")
+            resultados_text.insert(tk.END, f"🏢 NIT: {vehiculo_info[7] or 'No tiene'}\n")
+            
+            # Mostrar historial de órdenes
+            if ordenes:
+                resultados_text.insert(tk.END, f"\n{'═'*60}\n")
+                resultados_text.insert(tk.END, f"🔧 HISTORIAL DE ÓRDENES ({len(ordenes)})\n")
+                resultados_text.insert(tk.END, f"{'═'*60}\n\n")
+                
+                for orden in ordenes:
+                    resultados_text.insert(tk.END, f"📋 ORDEN #{orden[0]}\n")
+                    resultados_text.insert(tk.END, f"   📅 Fecha: {orden[1]} a {orden[2] or 'En progreso'}\n")
+                    resultados_text.insert(tk.END, f"   🔧 Servicio: {orden[4]}\n")
+                    resultados_text.insert(tk.END, f"   💰 Precio: Q{orden[5]:.2f}\n")
+                    resultados_text.insert(tk.END, f"   🛣️  Kilometraje: {orden[6]} {orden[7]}\n")
+                    resultados_text.insert(tk.END, f"   👷 Empleado: {orden[8] or 'No asignado'}\n")
+                    resultados_text.insert(tk.END, f"   📝 Descripción: {orden[3][:100]}...\n")
+                    resultados_text.insert(tk.END, f"{'─'*50}\n")
             else:
-                print("❌ Opción no válida. Por favor, selecciona una opción del menú.")
+                resultados_text.insert(tk.END, f"\n❌ Este vehículo no tiene órdenes de trabajo registradas.\n")
+        
+        def buscar_interactivo():
+            # Diálogo para buscar cliente primero
+            search_dialog = tk.Toplevel(dialog)
+            search_dialog.title("Buscar Cliente")
+            search_dialog.geometry("500x400")
+            
+            ttk.Label(search_dialog, text="Buscar cliente por nombre:").pack(pady=10)
+            search_var = tk.StringVar()
+            ttk.Entry(search_dialog, textvariable=search_var, width=40).pack(pady=5)
+            
+            listbox = tk.Listbox(search_dialog, width=60, height=15)
+            scrollbar = ttk.Scrollbar(search_dialog)
+            listbox.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=listbox.yview)
+            
+            def perform_search():
+                listbox.delete(0, tk.END)
+                clientes = self.taller.clientes.buscar_cliente_por_nombre(search_var.get())
+                for cliente in clientes:
+                    listbox.insert(tk.END, f"ID: {cliente[0]} | Nombre: {cliente[1]}")
+            
+            def seleccionar_cliente():
+                seleccion = listbox.curselection()
+                if not seleccion:
+                    return
                 
-        except KeyboardInterrupt:
-            print("\n\n❌ Operación cancelada por el usuario.")
-            break
-        except Exception as e:
-            print(f"❌ Error inesperado: {e}")
+                texto = listbox.get(seleccion[0])
+                cliente_id = int(texto.split("ID: ")[1].split(" |")[0])
+                search_dialog.destroy()
+                
+                # Ahora mostrar vehículos del cliente
+                mostrar_vehiculos_cliente(cliente_id)
+            
+            def mostrar_vehiculos_cliente(cliente_id):
+                vehiculos = self.taller.vehiculos.obtener_vehiculos_cliente(cliente_id)
+                
+                if not vehiculos:
+                    messagebox.showinfo("Información", "Este cliente no tiene vehículos")
+                    return
+                
+                vehiculo_dialog = tk.Toplevel(dialog)
+                vehiculo_dialog.title("Seleccionar Vehículo")
+                vehiculo_dialog.geometry("500x400")
+                
+                listbox2 = tk.Listbox(vehiculo_dialog, width=60, height=15)
+                scrollbar2 = ttk.Scrollbar(vehiculo_dialog)
+                listbox2.config(yscrollcommand=scrollbar2.set)
+                scrollbar2.config(command=listbox2.yview)
+                
+                for vehiculo in vehiculos:
+                    listbox2.insert(tk.END, f"ID: {vehiculo[0]} | {vehiculo[1]} {vehiculo[2]} | Placa: {vehiculo[4]}")
+                
+                def seleccionar_vehiculo():
+                    seleccion = listbox2.curselection()
+                    if seleccion:
+                        texto = listbox2.get(seleccion[0])
+                        vehiculo_id = int(texto.split("ID: ")[1].split(" |")[0])
+                        placa = texto.split("Placa: ")[1]
+                        placa_var.set(placa)
+                        vehiculo_dialog.destroy()
+                        buscar_por_placa()
+                
+                listbox2.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+                scrollbar2.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+                ttk.Button(vehiculo_dialog, text="Seleccionar", command=seleccionar_vehiculo).pack(pady=10)
+            
+            ttk.Button(search_dialog, text="Buscar", command=perform_search).pack(pady=5)
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+            ttk.Button(search_dialog, text="Seleccionar Cliente", command=seleccionar_cliente).pack(pady=10)
+        
+        ttk.Label(dialog, text="🔍 HISTORIAL DE VEHÍCULO", font=("Arial", 12, "bold")).pack(pady=10)
+        
+        # Opción 1: Buscar por placa
+        frame_placa = ttk.Frame(dialog)
+        frame_placa.pack(pady=10)
+        ttk.Label(frame_placa, text="Placa del vehículo:").pack(side=tk.LEFT, padx=5)
+        ttk.Entry(frame_placa, textvariable=placa_var, width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_placa, text="Buscar por Placa", command=buscar_por_placa).pack(side=tk.LEFT, padx=5)
+        
+        # Opción 2: Buscar interactivo
+        ttk.Label(dialog, text="O buscar por cliente:").pack(pady=5)
+        ttk.Button(dialog, text="Buscar Cliente Primero", command=buscar_interactivo).pack(pady=10)
+        
+        resultados_text.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
+    
+    def editar_cliente(self):
+        """Edita la información de un cliente existente"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Editar Cliente")
+        dialog.geometry("500x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Variables
+        cliente_id_var = tk.StringVar()
+        nombre_var = tk.StringVar()
+        telefono_var = tk.StringVar()
+        nit_var = tk.StringVar()
+        
+        def buscar_cliente():
+            search_dialog = tk.Toplevel(dialog)
+            search_dialog.title("Buscar Cliente para Editar")
+            search_dialog.geometry("500x400")
+            
+            ttk.Label(search_dialog, text="Buscar cliente por nombre:").pack(pady=10)
+            search_var = tk.StringVar()
+            ttk.Entry(search_dialog, textvariable=search_var, width=40).pack(pady=5)
+            
+            listbox = tk.Listbox(search_dialog, width=60, height=15)
+            scrollbar = ttk.Scrollbar(search_dialog)
+            listbox.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=listbox.yview)
+            
+            def perform_search():
+                listbox.delete(0, tk.END)
+                clientes = self.taller.clientes.buscar_cliente_por_nombre(search_var.get())
+                for cliente in clientes:
+                    listbox.insert(tk.END, f"ID: {cliente[0]} | Nombre: {cliente[1]} | Tel: {cliente[2] or 'N/A'}")
+            
+            def seleccionar():
+                seleccion = listbox.curselection()
+                if seleccion:
+                    texto = listbox.get(seleccion[0])
+                    cliente_id = int(texto.split("ID: ")[1].split(" |")[0])
+                    cliente_id_var.set(str(cliente_id))
+                    
+                    # Cargar datos del cliente
+                    detalles = self.taller.clientes.detalles_cliente(cliente_id)
+                    if detalles:
+                        cliente_info = detalles['cliente']
+                        nombre_var.set(cliente_info[0])
+                        telefono_var.set(cliente_info[1] or "")
+                        nit_var.set(cliente_info[2] or "")
+                    
+                    search_dialog.destroy()
+            
+            ttk.Button(search_dialog, text="Buscar", command=perform_search).pack(pady=5)
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+            ttk.Button(search_dialog, text="Seleccionar", command=seleccionar).pack(pady=10)
+        
+        def guardar():
+            try:
+                if not cliente_id_var.get().strip():
+                    messagebox.showerror("Error", "Debe seleccionar un cliente")
+                    return
+                
+                cliente_id = int(cliente_id_var.get())
+                
+                if not nombre_var.get().strip():
+                    messagebox.showerror("Error", "El nombre del cliente es obligatorio")
+                    return
+                
+                telefono = None
+                if telefono_var.get().strip():
+                    telefono = self.taller.validator.validar_telefono(telefono_var.get())
+                    if not telefono:
+                        messagebox.showerror("Error", "Teléfono inválido")
+                        return
+                
+                nit = None
+                if nit_var.get().strip():
+                    nit = self.taller.validator.validar_nit(nit_var.get())
+                    if not nit:
+                        messagebox.showerror("Error", "NIT inválido")
+                        return
+                
+                resultado = self.taller.clientes.editar_cliente(
+                    cliente_id,
+                    nombre_var.get().strip(),
+                    telefono,
+                    nit
+                )
+                
+                self.show_message(resultado)
+                dialog.destroy()
+                
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        ttk.Label(dialog, text="✏️ EDITAR CLIENTE", font=("Arial", 12, "bold")).pack(pady=10)
+        
+        # Buscar cliente
+        ttk.Button(dialog, text="Buscar Cliente", command=buscar_cliente).pack(pady=10)
+        
+        ttk.Label(dialog, text="ID Cliente:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=cliente_id_var, width=40, state='readonly').pack(pady=5)
+        
+        ttk.Label(dialog, text="Nombre completo:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=nombre_var, width=40).pack(pady=5)
+        
+        ttk.Label(dialog, text="Teléfono:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=telefono_var, width=40).pack(pady=5)
+        
+        ttk.Label(dialog, text="NIT:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=nit_var, width=40).pack(pady=5)
+        
+        ttk.Button(dialog, text="Guardar Cambios", command=guardar).pack(pady=20)
+    
+    def editar_empleado(self):
+        """Edita la información de un empleado existente"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Editar Empleado")
+        dialog.geometry("500x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Variables
+        empleado_id_var = tk.StringVar()
+        nombre_var = tk.StringVar()
+        telefono_var = tk.StringVar()
+        
+        def cargar_empleados():
+            empleados = self.taller.empleados.listar_empleados()
+            
+            if not empleados:
+                messagebox.showinfo("Información", "No hay empleados registrados")
+                return
+            
+            search_dialog = tk.Toplevel(dialog)
+            search_dialog.title("Seleccionar Empleado")
+            search_dialog.geometry("500x400")
+            
+            listbox = tk.Listbox(search_dialog, width=60, height=15)
+            scrollbar = ttk.Scrollbar(search_dialog)
+            listbox.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=listbox.yview)
+            
+            for empleado in empleados:
+                listbox.insert(tk.END, f"ID: {empleado[0]} | {empleado[1]} | Tel: {empleado[2]}")
+            
+            def seleccionar():
+                seleccion = listbox.curselection()
+                if seleccion:
+                    texto = listbox.get(seleccion[0])
+                    empleado_id = int(texto.split("ID: ")[1].split(" |")[0])
+                    empleado_id_var.set(str(empleado_id))
+                    
+                    # Cargar datos del empleado
+                    nombre = texto.split("| ")[1].split(" |")[0]
+                    telefono = texto.split("Tel: ")[1]
+                    nombre_var.set(nombre)
+                    telefono_var.set(telefono)
+                    
+                    search_dialog.destroy()
+            
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+            ttk.Button(search_dialog, text="Seleccionar", command=seleccionar).pack(pady=10)
+        
+        def guardar():
+            try:
+                if not empleado_id_var.get().strip():
+                    messagebox.showerror("Error", "Debe seleccionar un empleado")
+                    return
+                
+                empleado_id = int(empleado_id_var.get())
+                
+                if not nombre_var.get().strip():
+                    messagebox.showerror("Error", "El nombre del empleado es obligatorio")
+                    return
+                
+                telefono = self.taller.validator.validar_telefono(telefono_var.get())
+                if not telefono:
+                    messagebox.showerror("Error", "Teléfono inválido")
+                    return
+                
+                resultado = self.taller.empleados.editar_empleado(
+                    empleado_id,
+                    nombre_var.get().strip(),
+                    telefono
+                )
+                
+                self.show_message(resultado)
+                dialog.destroy()
+                
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        
+        ttk.Label(dialog, text="✏️ EDITAR EMPLEADO", font=("Arial", 12, "bold")).pack(pady=10)
+        
+        # Cargar empleados
+        ttk.Button(dialog, text="Seleccionar Empleado", command=cargar_empleados).pack(pady=10)
+        
+        ttk.Label(dialog, text="ID Empleado:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=empleado_id_var, width=40, state='readonly').pack(pady=5)
+        
+        ttk.Label(dialog, text="Nombre completo:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=nombre_var, width=40).pack(pady=5)
+        
+        ttk.Label(dialog, text="Teléfono:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=telefono_var, width=40).pack(pady=5)
+        
+        ttk.Button(dialog, text="Guardar Cambios", command=guardar).pack(pady=20)
+    
+    def menu_reportes(self):
+        """Muestra el menú de reportes con generación de gráficas"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Reportes Avanzados")
+        dialog.geometry("400x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        def generar_reporte(periodo):
+            reporte = self.taller.reportes.reporte_periodo(periodo)
+            
+            self.clear_results()
+            self.result_text.insert(tk.END, f"\n{'='*60}\n")
+            self.result_text.insert(tk.END, f"📊 REPORTE {periodo.upper()}\n")
+            self.result_text.insert(tk.END, f"{'='*60}\n\n")
+            self.result_text.insert(tk.END, f"📅 Período: {reporte['fecha_inicio']} al {datetime.now().date()}\n\n")
+            self.result_text.insert(tk.END, f"💰 Ganancias totales: Q{reporte['ganancias']:.2f}\n")
+            self.result_text.insert(tk.END, f"⏱️  Horas trabajadas: {reporte['horas_trabajadas']:.1f}\n")
+            self.result_text.insert(tk.END, f"🔧 Trabajos completados: {reporte['trabajos_completados']}\n")
+            
+            if reporte['servicios_populares']:
+                self.result_text.insert(tk.END, f"\n🏆 SERVICIOS MÁS POPULARES:\n")
+                for servicio, cantidad, total in reporte['servicios_populares']:
+                    self.result_text.insert(tk.END, f"   • {servicio}: {cantidad} trabajos (Q{total:.2f})\n")
+            
+            # Preguntar si generar gráfica
+            dialog.destroy()
+            
+            if reporte['servicios_populares']:
+                respuesta = messagebox.askyesno("Generar Gráfica", 
+                    "¿Desea generar una gráfica de los servicios más populares?")
+                
+                if respuesta:
+                    try:
+                        nombre_archivo = f"servicios_populares_{periodo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        fig = self.taller.reportes.crear_grafica_servicios_populares(reporte, nombre_archivo)
+                        
+                        # Mostrar gráfica en nueva ventana
+                        graph_dialog = tk.Toplevel(self.root)
+                        graph_dialog.title(f"Gráfica - Servicios Populares {periodo.capitalize()}")
+                        graph_dialog.geometry("800x600")
+                        
+                        canvas = FigureCanvasTkAgg(fig, master=graph_dialog)
+                        canvas.draw()
+                        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                        
+                        ttk.Label(graph_dialog, 
+                                 text=f"Gráfica guardada en: reportes/{nombre_archivo}.png",
+                                 font=("Arial", 10)).pack(pady=10)
+                        
+                    except Exception as e:
+                        messagebox.showerror("Error", f"No se pudo generar la gráfica: {e}")
+        
+        def mostrar_proyeccion():
+            proyeccion = self.taller.reportes.proyeccion_crecimiento()
+            
+            if not proyeccion:
+                messagebox.showinfo("Información", "No hay suficientes datos históricos (se necesitan al menos 2 meses) para generar proyecciones")
+                return
+            
+            self.clear_results()
+            self.result_text.insert(tk.END, f"\n{'='*60}\n")
+            self.result_text.insert(tk.END, "📈 PROYECCIÓN DE CRECIMIENTO\n")
+            self.result_text.insert(tk.END, f"{'='*60}\n\n")
+            
+            # Mostrar datos históricos
+            if 'datos_historicos' in proyeccion and proyeccion['datos_historicos']:
+                self.result_text.insert(tk.END, "📊 DATOS HISTÓRICOS (últimos 6 meses):\n")
+                for mes, total in proyeccion['datos_historicos']:
+                    self.result_text.insert(tk.END, f"   {mes}: Q{total:.2f}\n")
+                self.result_text.insert(tk.END, "\n")
+            
+            self.result_text.insert(tk.END, f"📈 Crecimiento promedio: {proyeccion['crecimiento_promedio']*100:.1f}% mensual\n")
+            self.result_text.insert(tk.END, f"\n🔮 PROYECCIONES PRÓXIMOS 6 MESES:\n")
+            for mes, ingreso in proyeccion['proyecciones']:
+                self.result_text.insert(tk.END, f"   {mes}: Q{ingreso:.2f}\n")
+            
+            dialog.destroy()
+        
+        ttk.Label(dialog, text="📊 REPORTES AVANZADOS", font=("Arial", 12, "bold")).pack(pady=20)
+        
+        tk.Frame(dialog, height=2, bg="gray").pack(fill=tk.X, padx=20, pady=10)
+        
+        ttk.Button(dialog, text="📅 Reporte Semanal", 
+                  command=lambda: generar_reporte('semana')).pack(pady=5, padx=50, fill=tk.X)
+        ttk.Button(dialog, text="📅 Reporte Mensual", 
+                  command=lambda: generar_reporte('mes')).pack(pady=5, padx=50, fill=tk.X)
+        ttk.Button(dialog, text="📅 Reporte Anual", 
+                  command=lambda: generar_reporte('año')).pack(pady=5, padx=50, fill=tk.X)
+        
+        tk.Frame(dialog, height=2, bg="gray").pack(fill=tk.X, padx=20, pady=10)
+        
+        ttk.Button(dialog, text="📈 Proyección de Crecimiento", 
+                  command=mostrar_proyeccion).pack(pady=5, padx=50, fill=tk.X)
+    
+    def recordatorios_inteligentes(self):
+        """Muestra recordatorios inteligentes"""
+        tipos_servicio = self.taller.recordatorios.obtener_tipos_servicio_disponibles()
+        
+        if not tipos_servicio:
+            messagebox.showinfo("Información", "No hay tipos de servicio registrados")
+            return
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Recordatorios Inteligentes")
+        dialog.geometry("600x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        listbox = tk.Listbox(dialog, width=70, height=15)
+        scrollbar = tk.Scrollbar(dialog)
+        listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=listbox.yview)
+        
+        for servicio in tipos_servicio:
+            listbox.insert(tk.END, f"🔧 {servicio}")
+        
+        def analizar_servicio():
+            seleccion = listbox.curselection()
+            if not seleccion:
+                messagebox.showwarning("Advertencia", "Seleccione un tipo de servicio")
+                return
+            
+            tipo_servicio = tipos_servicio[seleccion[0]]
+            
+            # Pedir margen de días
+            margen_dias = simpledialog.askinteger(
+                "Margen de días",
+                f"¿En cuántos días quieres buscar recordatorios para '{tipo_servicio}'?",
+                parent=dialog,
+                minvalue=1,
+                maxvalue=365,
+                initialvalue=30
+            )
+            
+            if not margen_dias:
+                return
+            
+            recordatorios = self.taller.recordatorios.predecir_proximo_servicio(tipo_servicio, margen_dias)
+            
+            self.clear_results()
+            self.result_text.insert(tk.END, f"\n{'='*60}\n")
+            self.result_text.insert(tk.END, f"🔔 RECORDATORIOS PARA: {tipo_servicio}\n")
+            self.result_text.insert(tk.END, f"📅 Margen: {margen_dias} días\n")
+            self.result_text.insert(tk.END, f"{'='*60}\n\n")
+            
+            if recordatorios:
+                self.result_text.insert(tk.END, f"🚗 VEHÍCULOS PRÓXIMOS A '{tipo_servicio}' ({len(recordatorios)}):\n\n")
+                for i, recordatorio in enumerate(recordatorios, 1):
+                    self.result_text.insert(tk.END, f"   {i}. {recordatorio['marca']} {recordatorio['modelo']} - {recordatorio['placa']}\n")
+                    self.result_text.insert(tk.END, f"      👤 Cliente: {recordatorio['cliente']}\n")
+                    self.result_text.insert(tk.END, f"      📞 Teléfono: {recordatorio['telefono'] or 'No tiene'}\n")
+                    self.result_text.insert(tk.END, f"      📅 Último servicio: {recordatorio['ultimo_servicio']}\n")
+                    self.result_text.insert(tk.END, f"      🎯 Próximo estimado: {recordatorio['proximo_estimado']}\n")
+                    self.result_text.insert(tk.END, f"      ⏰ Días restantes: {recordatorio['dias_restantes']}\n")
+                    self.result_text.insert(tk.END, "      " + "-" * 40 + "\n")
+                
+                self.result_text.insert(tk.END, f"\n💡 RECOMENDACIÓN: Contactar a estos clientes para programar su próximo servicio.\n")
+            else:
+                self.result_text.insert(tk.END, f"✅ No hay vehículos que necesiten '{tipo_servicio}' en los próximos {margen_dias} días\n")
+                self.result_text.insert(tk.END, f"💡 ¡Buen trabajo! Los mantenimientos están al día.\n")
+            
+            dialog.destroy()
+        
+        ttk.Label(dialog, text="Seleccione el tipo de servicio a analizar:", 
+                 font=("Arial", 10, "bold")).pack(pady=10)
+        
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+        
+        ttk.Button(dialog, text="Analizar", command=analizar_servicio).pack(pady=10)
+    
+    def salir(self):
+        """Cierra la aplicación"""
+        if messagebox.askyesno("Salir", "¿Está seguro que desea salir del sistema?"):
+            self.root.destroy()
 
 # ============================================================================
 # PUNTO DE ENTRADA DEL PROGRAMA
 # ============================================================================
+def main():
+    """Función principal para iniciar la aplicación"""
+    root = tk.Tk()
+    app = TallerSEYMOGUI(root)
+    root.mainloop()
+
 if __name__ == "__main__":
-    menu_principal()
+    main()
