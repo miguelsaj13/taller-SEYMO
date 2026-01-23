@@ -2906,11 +2906,12 @@ class TallerSEYMOGUI:
         buttons_row2 = [
             (" Historial Vehículo", self.historial_vehiculo),
             (" Editar Cliente", self.editar_cliente),
+            (" Editar Vehículo", self.editar_vehiculo),
             (" Editar Empleado", self.editar_empleado),
             (" Editar Orden", self.editar_orden),
             (" Recordatorios", self.recordatorios_inteligentes_mejorados),
             (" Eliminar", self.menu_eliminar),
-            (" Históricos", self.menu_reportes_historicos),  # NUEVO BOTÓN
+            (" Históricos", self.menu_reportes_historicos),  
             (" Salir", self.salir)
         ]
         
@@ -4967,7 +4968,197 @@ class TallerSEYMOGUI:
         ttk.Entry(dialog, textvariable=nit_var, width=40).pack(pady=5)
         
         ttk.Button(dialog, text="Guardar Cambios", command=guardar).pack(pady=20)
+    def editar_vehiculo(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Editar Vehículo")
+        dialog.geometry("500x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        vehiculo_id_var = tk.StringVar()
+        marca_var = tk.StringVar()
+        modelo_var = tk.StringVar()
+        año_var = tk.StringVar()
+        placa_var = tk.StringVar()
+        color_var = tk.StringVar()
+        cliente_info_var = tk.StringVar(value="No seleccionado")
+        def buscar__por_cliente():
+            search_dialog = tk.Toplevel(dialog)
+            search_dialog.title("Buscar Cliente")
+            search_dialog.geometry("500x400")
+        
+            ttk.Label(search_dialog, text="Buscar cliente por nombre:").pack(pady=10)
+            search_var = tk.StringVar()
+            ttk.Entry(search_dialog, textvariable=search_var, width=40).pack(pady=5)
+        
+            listbox = tk.Listbox(search_dialog, width=60, height=15)
+            scrollbar = ttk.Scrollbar(search_dialog)
+            listbox.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=listbox.yview)
+            def perform_search():
+                listbox.delete(0, tk.END)
+                clientes = self.taller.clientes.buscar_cliente_por_nombre(search_var.get())
+
+                for cliente in clientes:
+                    listbox.insert(tk.END, f"ID: {cliente[0]} | Nombre: {cliente[1]} | Tel: {cliente[2] or 'N/A'}")
+            def seleccionar_cliente():
+                seleccion = listbox.curselection()
+                if not seleccion:
+                    return
+                
+                texto = listbox.get(seleccion[0])
+                cliente_id = int(texto.split("ID: ")[1].split(" |")[0])
+                cliente_nombre = texto.split("| ")[1].split(" |")[0]
+                search_dialog.destroy()
+                mostrar_vehiculo_cliente(cliente_id, cliente_nombre)                
+                    
+            ttk.Button(search_dialog, text="Buscar", command=perform_search).pack(pady=5)
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+            ttk.Button(search_dialog, text="Seleccionar cliente", command=seleccionar_cliente).pack(pady=10)
+        def mostrar_vehiculo_cliente(cliente_id, cliente_nombre):
+            vehiculos = self.taller.vehiculos.obtener_vehiculos_cliente(cliente_id)
+            if not vehiculos:
+                messagebox.showinfo("Información", f"El cliente '{cliente_nombre}' no tiene vehículos registrados")
+                return
+            vehiculo_dialog = tk.Toplevel(dialog)
+            vehiculo_dialog.title(f"Seleccionar Vehículo - {cliente_nombre}")
+            vehiculo_dialog.geometry("600x500")
+        
+            ttk.Label(vehiculo_dialog, text=f"Vehículos de {cliente_nombre}:").pack(pady=10)
+        
+            listbox = tk.Listbox(vehiculo_dialog, width=70, height=20)
+            scrollbar = ttk.Scrollbar(vehiculo_dialog)
+            listbox.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=listbox.yview)
+        
+            # Mostrar todos los vehículos del cliente
+            for vehiculo in vehiculos:
+                id_veh, marca, modelo, año, placa, color = vehiculo
+                listbox.insert(tk.END,
+                    f"ID: {id_veh} | {marca} {modelo} {año} | "
+                    f"Placa: {placa} | Color: {color or 'No especificado'}")
+            def seleccionar_vehiculo():
+                seleccion = listbox.curselection()
+                if seleccion:
+                    texto = listbox.get(seleccion[0])
+                    vehiculo_id = int(texto.split("ID: ")[1].split(" |")[0])
+                
+                # Extraer información del vehículo del texto
+                    partes = texto.split(" | ")
+                    marca_modelo = partes[1]
+                    placa_texto = partes[2].replace("Placa: ", "")
+                
+                # Actualizar variables
+                    vehiculo_id_var.set(str(vehiculo_id))
+                    cliente_id_var.set(str(cliente_id))
+                    cliente_info_var.set(f"{cliente_nombre} (ID: {cliente_id})")
+                
+                # Cargar datos completos del vehículo
+                    cargar_datos_vehiculo(vehiculo_id)
+                
+                    vehiculo_dialog.destroy()
+            def cargar_datos_vehiculo(vehiculo_id):
+                detalles = self.taller.vehiculos.detalles_vehiculo(vehiculo_id)
+                if detalles:
+                    vehiculo_info = detalles['vehiculo']
+                    marca_var.set(vehiculo_info[0])
+                    modelo_var.set(vehiculo_info[1])
+                    año_var.set(str(vehiculo_info[2]))
+                    placa_var.set(vehiculo_info[3])
+                    color_var.set(vehiculo_info[4] or "")
+            listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+            ttk.Button(vehiculo_dialog, text="Seleccionar Vehículo", command=seleccionar_vehiculo).pack(pady=10)
+        
+        def guardar():
+            try:
+                if not vehiculo_id_var.get().strip():
+                    messagebox.showerror("Error", "Debe seleccionar un vehículo")
+                    return
+            
+                vehiculo_id = int(vehiculo_id_var.get())
+            
+            # Valido los datos obligatorios
+                if not marca_var.get().strip():
+                    messagebox.showerror("Error", "La marca es obligatoria")
+                    return
+                
+                if not modelo_var.get().strip():
+                    messagebox.showerror("Error", "El modelo es obligatorio")
+                    return
+                if not año_var.get().strip():
+                    messagebox.showerror("Error", "El año es obligatorio")
+                    return
+                año = int(año_var.get())
+                if not self.taller.validator.validar_año_vehiculo(año):
+                    messagebox.showerror("Error", "Año del vehículo inválido")
+                    return
+            
+                if not placa_var.get().strip():
+                    messagebox.showerror("Error", "La placa es obligatoria")
+                    return
+            
+                placa = placa_var.get().strip().upper()
+            
+                cursor = self.taller.db.execute_query(
+                    'SELECT id FROM vehiculos WHERE placa = ? AND id != ?',
+                    (placa, vehiculo_id)
+                )
+                if cursor.fetchone():
+                    messagebox.showerror("Error", f"Ya existe otro vehículo con la placa {placa}")
+                    return
+                resultado = self.taller.vehiculos.editar_vehiculo(
+                    vehiculo_id,
+                   marca_var.get().strip(),
+                    modelo_var.get().strip(),
+                    año,
+                    placa,
+                    color_var.get().strip() or None
+                )
+                self.show_message(resultado)
+                dialog.destroy()
+            except ValueError as e:
+                messagebox.showerror("Error", f"Dato inválido: {e}")
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+
+        ttk.Label(dialog, text=" EDITAR VEHÍCULO", font=("Arial", 12, "bold")).pack(pady=10)
+        ttk.Label(dialog, text="Primero busque el cliente, luego seleccione el vehículo", font=("Arial", 9)).pack(pady=5)
+        ttk.Button(dialog, text="1. Buscar por Cliente", command=buscar__por_cliente, style="Accent.TButton").pack(pady=10)
+        ttk.Label(dialog, text="Cliente seleccionado:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=cliente_info_var, width=50, state='readonly').pack(pady=5)
     
+        ttk.Label(dialog, text="ID Vehículo:").pack(pady=5)
+        ttk.Entry(dialog, textvariable=vehiculo_id_var, width=40, state='readonly').pack(pady=5)
+    
+    
+        frame_campos = ttk.LabelFrame(dialog, text="Datos del Vehículo")
+        frame_campos.pack(pady=10, padx=20, fill=tk.X)
+    
+        ttk.Label(frame_campos, text="Marca:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Entry(frame_campos, textvariable=marca_var, width=30).grid(row=0, column=1, padx=5, pady=5)
+    
+        ttk.Label(frame_campos, text="Modelo:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        ttk.Entry(frame_campos, textvariable=modelo_var, width=30).grid(row=1, column=1, padx=5, pady=5)
+    
+        ttk.Label(frame_campos, text="Año:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        ttk.Entry(frame_campos, textvariable=año_var, width=30).grid(row=2, column=1, padx=5, pady=5)
+    
+        ttk.Label(frame_campos, text="Placa:").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        ttk.Entry(frame_campos, textvariable=placa_var, width=30).grid(row=3, column=1, padx=5, pady=5)
+    
+        ttk.Label(frame_campos, text="Color (opcional):").grid(row=4, column=0, padx=5, pady=5, sticky="w")
+        ttk.Entry(frame_campos, textvariable=color_var, width=30).grid(row=4, column=1, padx=5, pady=5)
+    
+        frame_botones = tk.Frame(dialog)
+        frame_botones.pack(pady=10)
+    
+        ttk.Button(frame_botones, text="Guardar Cambios", command=guardar).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_botones, text="Cancelar", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
+    
+        style = ttk.Style()
+        style.configure("Accent.TButton", background="#3498db", foreground="white", font=("Arial", 10, "bold"))
+
     def editar_empleado(self):
         """Muestra una ventana para editar un empleado"""
         dialog = tk.Toplevel(self.root)
@@ -6062,9 +6253,8 @@ class TallerSEYMOGUI:
         if messagebox.askyesno("Salir", "¿Está seguro que desea salir del sistema?"):
             self.root.destroy()
 
-# ============================================================================
 # INICIO DEL PROGRAMA
-# ============================================================================
+
 def main():
     """Función principal que inicia el programa"""
     # Creo la ventana principal
