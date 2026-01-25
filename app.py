@@ -879,21 +879,24 @@ class ReportManager:
         # Obtengo las ganancias totales del año
         cursor = self.db.execute_query('''
             SELECT 
-                SUM(precio_final) as total_ganancias,
+                SUM(precio_final) as ingresos_totales,
+                SUM(costo_mano_obra) as ganancias_netas,
+                SUM(costo_repuestos) as costo_repuestos,
                 SUM(horas_trabajadas) as total_horas,
                 COUNT(*) as total_trabajos,
-                AVG(precio_final) as promedio_por_trabajo,
-                AVG(horas_trabajadas) as promedio_horas_por_trabajo
+                AVG(costo_mano_obra) as promedio_ganancias_por_trabajo,
+                AVG(horas_trabajadas) as promedio_horas_por_trabajo,
+                AVG(precio_final) as promedio_ingreso_por_trabajo
             FROM ordenes_trabajo 
             WHERE strftime('%Y', fecha_fin) = ?
         ''', (str(año),))
         
         resultado = cursor.fetchone()
-        ganancias, horas, trabajos, promedio, promedio_horas = resultado
+        ingresos, ganancias, repuestos, horas, trabajos, promedio_ganancias, promedio_horas, promedio_ingreso = resultado
         
         # Obtengo los servicios más populares del año
         cursor = self.db.execute_query('''
-            SELECT tipo_servicio, COUNT(*), SUM(precio_final)
+            SELECT tipo_servicio, COUNT(*), SUM(costo_mano_obra) as ganancias_servicio
             FROM ordenes_trabajo 
             WHERE strftime('%Y', fecha_fin) = ?
             GROUP BY tipo_servicio
@@ -907,7 +910,8 @@ class ReportManager:
         cursor = self.db.execute_query('''
             SELECT 
                 strftime('%m', fecha_fin) as mes,
-                SUM(precio_final) as ganancias_mes,
+                SUM(costo_mano_obra) as ganancias_mes,
+                SUM(precio_final) as ingresos_mes,
                 COUNT(*) as trabajos_mes
             FROM ordenes_trabajo 
             WHERE strftime('%Y', fecha_fin) = ?
@@ -933,12 +937,12 @@ class ReportManager:
         
         # Obtengo los empleados más productivos del año
         cursor = self.db.execute_query('''
-            SELECT e.nombre, COUNT(*) as trabajos, SUM(o.precio_final) as ingresos
+            SELECT e.nombre, COUNT(*) as trabajos, SUM(o.costo_mano_obra) as ganancias_generadas
             FROM empleados e
             JOIN ordenes_trabajo o ON e.id = o.empleado_id
             WHERE strftime('%Y', o.fecha_fin) = ?
             GROUP BY e.id
-            ORDER BY ingresos DESC
+            ORDER BY ganancias_generadas DESC
             LIMIT 10
         ''', (str(año),))
         
@@ -974,7 +978,7 @@ class ReportManager:
         cursor = self.db.execute_query('''
             SELECT 
                 strftime('%m', fecha_fin) as mes,
-                SUM(precio_final) as ganancias
+                SUM(costo_mano_obra) as ganancias
             FROM ordenes_trabajo 
             WHERE strftime('%Y', fecha_fin) = ?
             GROUP BY strftime('%m', fecha_fin)
@@ -985,10 +989,13 @@ class ReportManager:
         
         return {
             'año': año,
-            'ganancias_totales': ganancias or 0,
+            'ingresos_totales': ingresos or 0,
+            'ganancias_netas': ganancias or 0,
+            'costo_repuestos': repuestos or 0,
             'horas_totales': horas or 0,
             'trabajos_totales': trabajos or 0,
-            'promedio_por_trabajo': promedio or 0,
+            'promedio_ganancias_por_trabajo': promedio_ganancias or 0,
+            'promedio_ingreso_por_trabajo': promedio_ingreso or 0,
             'promedio_horas_por_trabajo': promedio_horas or 0,
             'servicios_populares': servicios_populares,
             'ganancias_por_mes': ganancias_por_mes,
@@ -1006,10 +1013,12 @@ class ReportManager:
         for año in años:
             datos_año = self.reporte_año_especifico(año)
             datos_comparativos[año] = {
-                'ganancias': datos_año['ganancias_totales'],
+                'ingresos': datos_año['ingresos_totales'],
+                'ganancias_netas': datos_año['ganancias_netas'],
                 'trabajos': datos_año['trabajos_totales'],
                 'clientes_unicos': len(datos_año['clientes_frecuentes']),
-                'promedio_ticket': datos_año['promedio_por_trabajo'],
+                'promedio_ingreso': datos_año['promedio_ingreso_por_trabajo'],
+                'promedio_ganancias': datos_año['promedio_ganancias_por_trabajo'],
                 'mejor_mes': self._obtener_mejor_mes(datos_año['ganancias_por_mes']) if datos_año['ganancias_por_mes'] else None
             }
         
@@ -1021,20 +1030,29 @@ class ReportManager:
             año_anterior = años_ordenados[i-1]
             
             if año_anterior in datos_comparativos and año_actual in datos_comparativos:
-                ganancias_actual = datos_comparativos[año_actual]['ganancias']
-                ganancias_anterior = datos_comparativos[año_anterior]['ganancias']
-                
-                if ganancias_anterior > 0:
-                    crecimiento_porcentual = ((ganancias_actual - ganancias_anterior) / ganancias_anterior) * 100
+                ingresos_actual = datos_comparativos[año_actual]['ingresos']
+                ingresos_anterior = datos_comparativos[año_anterior]['ingresos']
+            
+                ganancias_actual = datos_comparativos[año_actual]['ganancias_netas']
+                ganancias_anterior = datos_comparativos[año_anterior]['ganancias_netas']
+            
+                if ingresos_anterior > 0:
+                    crecimiento_ingresos = ((ingresos_actual - ingresos_anterior) / ingresos_anterior) * 100
                 else:
-                    crecimiento_porcentual = 100 if ganancias_actual > 0 else 0
-                
+                    crecimiento_ingresos = 100 if ingresos_actual > 0 else 0
+            
+                if ganancias_anterior > 0:
+                    crecimiento_ganancias = ((ganancias_actual - ganancias_anterior) / ganancias_anterior) * 100
+                else:
+                    crecimiento_ganancias = 100 if ganancias_actual > 0 else 0
+            
                 crecimiento[f"{año_anterior}-{año_actual}"] = {
-                    'crecimiento_ganancias': crecimiento_porcentual,
+                    'crecimiento_ingresos': crecimiento_ingresos,
+                    'crecimiento_ganancias': crecimiento_ganancias,
                     'aumento_trabajos': datos_comparativos[año_actual]['trabajos'] - datos_comparativos[año_anterior]['trabajos'],
                     'aumento_clientes': datos_comparativos[año_actual]['clientes_unicos'] - datos_comparativos[año_anterior]['clientes_unicos']
                 }
-        
+
         return {
             'datos_por_año': datos_comparativos,
             'crecimiento': crecimiento,
@@ -1050,7 +1068,8 @@ class ReportManager:
         return {
             'mes': int(mejor_mes[0]),
             'nombre_mes': calendar.month_name[int(mejor_mes[0])],
-            'ganancias': mejor_mes[1]
+            'ganancias': mejor_mes[1],
+            'ingresos': mejor_mes[2] if len(mejor_mes) > 2 else mejor_mes[1]
         }
     
     def crear_grafica_comparativa_años(self, datos_comparativos: Dict):
@@ -1058,7 +1077,8 @@ class ReportManager:
         import matplotlib.pyplot as plt
         
         años = list(datos_comparativos['datos_por_año'].keys())
-        ganancias = [datos_comparativos['datos_por_año'][año]['ganancias'] for año in años]
+        ingresos = [datos_comparativos['datos_por_año'][año].get('ingresos', datos_comparativos['datos_por_año'][año].get('ganancias', 0)) for año in años]
+        ganancias_netas = [datos_comparativos['datos_por_año'][año].get('ganancias_netas', 0) for año in años]
         trabajos = [datos_comparativos['datos_por_año'][año]['trabajos'] for año in años]
         
         fig = Figure(figsize=(12, 8))
@@ -1233,16 +1253,20 @@ class ReportManager:
         
         # Obtengo las ganancias totales
         cursor = self.db.execute_query('''
-            SELECT SUM(precio_final), SUM(horas_trabajadas), COUNT(*)
+            SELECT 
+                SUM(precio_final) as ingresos_totales,
+                SUM(costo_mano_obra) as ganancias_netas,
+                SUM(costo_repuestos) as costo_repuestos,
+                SUM(horas_trabajadas) as total_horas,
+                COUNT(*) as total_trabajos
             FROM ordenes_trabajo 
             WHERE fecha_fin >= ?
         ''', (fecha_inicio.date(),))
         
-        ganancias, horas, trabajos = cursor.fetchone()
+        ingresos, ganancias, repuestos, horas, trabajos = cursor.fetchone()
         
-        # Obtengo los servicios más populares
         cursor = self.db.execute_query('''
-            SELECT tipo_servicio, COUNT(*), SUM(precio_final)
+            SELECT tipo_servicio, COUNT(*), SUM(costo_mano_obra) as ganancias_servicio
             FROM ordenes_trabajo 
             WHERE fecha_fin >= ?
             GROUP BY tipo_servicio
@@ -1252,9 +1276,8 @@ class ReportManager:
         
         servicios_populares = cursor.fetchall()
         
-        # Obtengo ganancias por día
         cursor = self.db.execute_query('''
-            SELECT fecha_fin, SUM(precio_final)
+            SELECT fecha_fin, SUM(costo_mano_obra) as ganancias_dia
             FROM ordenes_trabajo 
             WHERE fecha_fin >= ?
             GROUP BY fecha_fin
@@ -1263,7 +1286,6 @@ class ReportManager:
         
         ganancias_por_dia = cursor.fetchall()
         
-        # Obtengo vehículos más frecuentes
         cursor = self.db.execute_query('''
             SELECT v.marca, COUNT(*) as frecuencia
             FROM ordenes_trabajo o
@@ -1291,7 +1313,9 @@ class ReportManager:
         
         # Devuelvo todos los datos organizados
         return {
-            'ganancias': ganancias or 0,
+            'ingresos_totales': ingresos or 0,
+            'ganancias_netas': ganancias or 0,
+            'costo_repuestos': repuestos or 0,
             'horas_trabajadas': horas or 0,
             'trabajos_completados': trabajos or 0,
             'periodo': periodo,
@@ -1431,63 +1455,132 @@ class ReportManager:
         """Crea una gráfica con estadísticas generales"""
         import matplotlib.pyplot as plt
         
-        fig = Figure(figsize=(12, 8))
+        fig = Figure(figsize=(14, 8))
         
         # Gráfica 1: Métricas principales
-        ax1 = fig.add_subplot(221)
-        metricas = ['Ganancias', 'Trabajos', 'Horas']
-        valores = [reporte['ganancias'], reporte['trabajos_completados'], reporte['horas_trabajadas']]
-        colors = ['#4CAF50', '#2196F3', '#FF9800']
-        
-        bars = ax1.bar(metricas, valores, color=colors, alpha=0.7)
-        for bar, val in zip(bars, valores):
+        ax1 = fig.add_subplot(231)
+        metricas_financieras = ['Ingresos Totales', 'Ganancias Netas', 'Costo Repuestos']
+        valores_financieros = [
+            reporte.get('ingresos_totales', reporte.get('ganancias', 0)), 
+            reporte.get('ganancias_netas', 0),
+            reporte.get('costo_repuestos', 0)
+        ]
+        colors_financieros = ['#4CAF50', '#2196F3', '#FF9800']
+    
+        bars1 = ax1.bar(metricas_financieras, valores_financieros, color=colors_financieros, alpha=0.7)
+        for bar, val in zip(bars1, valores_financieros):
             height = bar.get_height()
-            ax1.text(bar.get_x() + bar.get_width()/2., height + max(valores)*0.02,
-                    f'{val:.0f}' if val >= 10 else f'{val:.1f}', 
-                    ha='center', va='bottom')
-        
-        ax1.set_title('Métricas Principales', fontsize=12, fontweight='bold')
+            ax1.text(bar.get_x() + bar.get_width()/2., height + max(valores_financieros)*0.02,
+                    f'Q{val:,.0f}' if val >= 10 else f'Q{val:.1f}', 
+                    ha='center', va='bottom', fontsize=9)
+    
+        ax1.set_title('Métricas Financieras', fontsize=12, fontweight='bold')
         ax1.grid(True, alpha=0.3, axis='y')
+        ax1.tick_params(axis='x', rotation=45)
         
         # Gráfica 2: Distribución de servicios (si existen)
-        if reporte['servicios_populares']:
-            ax2 = fig.add_subplot(222)
-            servicios = [s[0] for s in reporte['servicios_populares']]
-            cantidades = [s[1] for s in reporte['servicios_populares']]
-            
-            wedges, texts, autotexts = ax2.pie(cantidades, labels=servicios, autopct='%1.1f%%',
-                                              colors=plt.cm.Set3(np.arange(len(servicios))),
-                                              startangle=90)
-            ax2.set_title('Distribución de Servicios', fontsize=12, fontweight='bold')
-        
+        ax2 = fig.add_subplot(232)
+        metricas_operativas = ['Trabajos', 'Horas']
+        valores_operativos = [
+            reporte.get('trabajos_completados', reporte.get('trabajos_totales', 0)),
+            reporte.get('horas_trabajadas', reporte.get('horas_totales', 0))
+        ]
+        colors_operativos = ['#9C27B0', '#00BCD4']
+    
+        bars2 = ax2.bar(metricas_operativas, valores_operativos, color=colors_operativos, alpha=0.7)
+        for bar, val in zip(bars2, valores_operativos):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height + max(valores_operativos)*0.02,
+                    f'{val:.0f}', 
+                    ha='center', va='bottom', fontsize=9)
+    
+        ax2.set_title('Métricas Operativas', fontsize=12, fontweight='bold')
+        ax2.grid(True, alpha=0.3, axis='y')
         # Gráfica 3: Comparativa vehículos vs ingresos
-        if reporte['vehiculos_frecuentes'] and len(reporte['vehiculos_frecuentes']) > 0:
-            ax3 = fig.add_subplot(223)
-            marcas = [v[0] for v in reporte['vehiculos_frecuentes']]
-            frecuencias = [v[1] for v in reporte['vehiculos_frecuentes']]
-            ax3.plot(marcas, frecuencias, 'o-', color='#9C27B0', alpha=0.7)
-            ax3.set_title('Frecuencia por Marca', fontsize=12, fontweight='bold')
-            ax3.set_ylabel('Visitas', fontsize=10)
-            ax3.grid(True, alpha=0.3)
-            ax3.tick_params(axis='x', rotation=45)
+        ax3 = fig.add_subplot(233)
+        metricas_promedio = ['Ingreso/Trabajo', 'Ganancia/Trabajo']
+        valores_promedio = [
+            reporte.get('promedio_ingreso_por_trabajo', 
+                       reporte.get('ingresos_totales', 0) / max(1, reporte.get('trabajos_completados', 1))),
+            reporte.get('promedio_ganancias_por_trabajo',
+                       reporte.get('ganancias_netas', 0) / max(1, reporte.get('trabajos_completados', 1)))
+        ]
+        colors_promedio = ['#FF5722', '#8BC34A']
+    
+        bars3 = ax3.bar(metricas_promedio, valores_promedio, color=colors_promedio, alpha=0.7)
+        for bar, val in zip(bars3, valores_promedio):
+            height = bar.get_height()
+            ax3.text(bar.get_x() + bar.get_width()/2., height + max(valores_promedio)*0.02,
+                    f'Q{val:.0f}', 
+                    ha='center', va='bottom', fontsize=9)
+    
+        ax3.set_title('Promedios por Trabajo', fontsize=12, fontweight='bold')
+        ax3.grid(True, alpha=0.3, axis='y')
+        ax3.tick_params(axis='x', rotation=45)
         
         # Gráfica 4: Resumen visual
-        ax4 = fig.add_subplot(224)
-        ax4.text(0.5, 0.5, 
-                f"Periodo: {reporte['periodo'].capitalize()}\n"
-                f"Desde: {reporte['fecha_inicio']}\n"
-                f"Ganancias: Q{reporte['ganancias']:.2f}\n"
-                f"Trabajos: {reporte['trabajos_completados']}\n"
-                f"Horas: {reporte['horas_trabajadas']:.1f}",
-                ha='center', va='center', fontsize=11,
+        if 'servicios_populares' in reporte and reporte['servicios_populares']:
+            ax4 = fig.add_subplot(234)
+            servicios = [s[0] for s in reporte['servicios_populares']]
+            cantidades = [s[1] for s in reporte['servicios_populares']]
+        
+            wedges, texts, autotexts = ax4.pie(cantidades, labels=servicios, autopct='%1.1f%%',
+                                            colors=plt.cm.Set3(np.arange(len(servicios))),
+                                            startangle=90)
+            ax4.set_title('Distribución de Servicios', fontsize=12, fontweight='bold')
+        
+        # Gráfica 5: Margen de ganancia
+        ax5 = fig.add_subplot(235)
+        if reporte.get('ingresos_totales', 0) > 0:
+            margen_ganancia = (reporte.get('ganancias_netas', 0) / reporte.get('ingresos_totales', 1)) * 100
+            labels_margen = ['Ganancias', 'Repuestos']
+            valores_margen = [reporte.get('ganancias_netas', 0), reporte.get('costo_repuestos', 0)]
+            colors_margen = ['#27ae60', '#e74c3c']
+        
+            wedges, texts, autotexts = ax5.pie(valores_margen, labels=labels_margen, autopct='%1.1f%%',
+                                              colors=colors_margen, startangle=90)
+            ax5.set_title(f'Distribución de Ingresos\n(Margen: {margen_ganancia:.1f}%)', 
+                         fontsize=12, fontweight='bold')
+        # Gráfica 6: Resumen financiero
+        ax6 = fig.add_subplot(236)
+        ax6.axis('off')
+    
+        resumen_text = " RESUMEN FINANCIERO\n\n"
+    
+        if 'periodo' in reporte:
+            resumen_text += f"Periodo: {reporte['periodo'].capitalize()}\n"
+            resumen_text += f"Desde: {reporte['fecha_inicio']}\n\n"
+    
+        resumen_text += f"Ingresos totales:\n"
+        resumen_text += f"  Q{reporte.get('ingresos_totales', reporte.get('ganancias', 0)):,.2f}\n\n"
+    
+        resumen_text += f"Ganancias netas:\n"
+        resumen_text += f"  Q{reporte.get('ganancias_netas', 0):,.2f}\n\n"
+    
+        resumen_text += f"Costo repuestos:\n"
+        resumen_text += f"  Q{reporte.get('costo_repuestos', 0):,.2f}\n\n"
+    
+        if reporte.get('ingresos_totales', 0) > 0:
+            margen = (reporte.get('ganancias_netas', 0) / reporte.get('ingresos_totales', 1)) * 100
+            resumen_text += f"Margen de ganancia:\n"
+            resumen_text += f"  {margen:.1f}%\n\n"
+    
+        resumen_text += f"Trabajos realizados:\n"
+        resumen_text += f"  {reporte.get('trabajos_completados', reporte.get('trabajos_totales', 0))}"
+    
+        ax6.text(0.1, 0.95, resumen_text, transform=ax6.transAxes, 
+                fontsize=10, verticalalignment='top',
                 bbox=dict(boxstyle="round,pad=0.5", facecolor="#E3F2FD", edgecolor="black"))
-        ax4.set_title('Resumen del Reporte', fontsize=12, fontweight='bold')
-        ax4.axis('off')
-        
-        fig.suptitle(f'Reporte {reporte["periodo"].capitalize()} - Taller SEYMO', 
-                    fontsize=16, fontweight='bold', y=0.98)
+    
+        if 'periodo' in reporte:
+            fig.suptitle(f'Reporte {reporte["periodo"].capitalize()} - Taller SEYMO', 
+                        fontsize=6, fontweight='bold', y=0.98)
+        else:
+            fig.suptitle(f'Reporte Anual - Taller SEYMO', 
+                        fontsize=16, fontweight='bold', y=0.98)
+    
         fig.tight_layout()
-        
+    
         return fig
     
     def reporte_clientes(self) -> Dict:
@@ -3053,11 +3146,15 @@ class TallerSEYMOGUI:
             self.result_text.insert(tk.END, f"{'='*80}\n\n")
             
             # Estadísticas principales
-            self.result_text.insert(tk.END, " ESTADÍSTICAS PRINCIPALES:\n")
-            self.result_text.insert(tk.END, f"   • Ganancias totales: Q{reporte_año['ganancias_totales']:,.2f}\n")
+            self.result_text.insert(tk.END, " ESTADÍSTICAS FINANCIERAS:\n")
+            self.result_text.insert(tk.END, f"   • Ingresos totales: Q{reporte_año['ingresos_totales']:,.2f}\n")
+            self.result_text.insert(tk.END, f"   • Ganancias netas: Q{reporte_año['ganancias_netas']:,.2f}\n")
+            self.result_text.insert(tk.END, f"   • Costo de repuestos: Q{reporte_año['costo_repuestos']:,.2f}\n")
+            self.result_text.insert(tk.END, f"   • Margen de ganancia: {(reporte_año['ganancias_netas']/reporte_año['ingresos_totales']*100):.1f}%\n")
             self.result_text.insert(tk.END, f"   • Trabajos realizados: {reporte_año['trabajos_totales']}\n")
             self.result_text.insert(tk.END, f"   • Horas trabajadas: {reporte_año['horas_totales']:.1f}\n")
-            self.result_text.insert(tk.END, f"   • Ticket promedio: Q{reporte_año['promedio_por_trabajo']:.2f}\n")
+            self.result_text.insert(tk.END, f"   • Ingreso promedio por trabajo: Q{reporte_año['promedio_ingreso_por_trabajo']:.2f}\n")
+            self.result_text.insert(tk.END, f"   • Ganancia promedio por trabajo: Q{reporte_año['promedio_ganancias_por_trabajo']:.2f}\n")
             self.result_text.insert(tk.END, f"   • Horas promedio por trabajo: {reporte_año['promedio_horas_por_trabajo']:.1f}\n\n")
             
             # Servicios más populares
@@ -3129,72 +3226,101 @@ class TallerSEYMOGUI:
                 
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo generar el reporte: {e}")
-    
+
     def generar_comparativa_años(self, años: List[int]):
         """Genera comparativa entre múltiples años"""
         try:
             # Generar comparativa
-            comparativa = self.taller.reportes.reporte_comparativo_años(años)
-            
-            # Mostrar comparativa
+            comparativa = self.taller.reportes.reporte_comparativa_años(años)
+        
+        # Mostrar comparativa
             self.clear_results()
             self.result_text.insert(tk.END, f"\n{'='*80}\n")
-            self.result_text.insert(tk.END, f" COMPARATIVA ENTRE AÑOS\n")
+            self.result_text.insert(tk.END, f" COMPARATIVA FINANCIERA ENTRE AÑOS\n")
             self.result_text.insert(tk.END, f"{'='*80}\n\n")
-            
-            # Datos por año
+        
+        # Datos por año
             for año in sorted(años):
                 datos = comparativa['datos_por_año'][año]
                 self.result_text.insert(tk.END, f" AÑO {año}:\n")
-                self.result_text.insert(tk.END, f"   • Ganancias: Q{datos['ganancias']:,.2f}\n")
+                self.result_text.insert(tk.END, f"   • Ingresos totales: Q{datos.get('ingresos', datos.get('ganancias', 0)):,.2f}\n")
+                self.result_text.insert(tk.END, f"   • Ganancias netas: Q{datos.get('ganancias_netas', 0):,.2f}\n")
                 self.result_text.insert(tk.END, f"   • Trabajos: {datos['trabajos']}\n")
                 self.result_text.insert(tk.END, f"   • Clientes únicos: {datos['clientes_unicos']}\n")
-                self.result_text.insert(tk.END, f"   • Ticket promedio: Q{datos['promedio_ticket']:.2f}\n")
-                
+                self.result_text.insert(tk.END, f"   • Ingreso promedio: Q{datos.get('promedio_ingreso', datos.get('promedio_ticket', 0)):.2f}\n")
+                self.result_text.insert(tk.END, f"   • Ganancia promedio: Q{datos.get('promedio_ganancias', 0):,.2f}\n")
+            
                 if datos['mejor_mes']:
                     self.result_text.insert(tk.END, f"   • Mejor mes: {datos['mejor_mes']['nombre_mes']} (Q{datos['mejor_mes']['ganancias']:,.2f})\n")
-                
-                self.result_text.insert(tk.END, "\n")
             
-            # Crecimiento entre años
+            # Calcular margen si hay datos
+                ingresos = datos.get('ingresos', datos.get('ganancias', 0))
+                if ingresos > 0:
+                    margen = (datos.get('ganancias_netas', 0) / ingresos) * 100
+                    self.result_text.insert(tk.END, f"   • Margen de ganancia: {margen:.1f}%\n")
+            
+                self.result_text.insert(tk.END, "\n")
+        
+        # Crecimiento entre años
             if comparativa['crecimiento']:
                 self.result_text.insert(tk.END, " CRECIMIENTO ENTRE AÑOS:\n")
-                for periodo, datos in comparativa['crecimiento'].items():
-                    self.result_text.insert(tk.END, f"   • {periodo}: {datos['crecimiento_ganancias']:.1f}% ")
-                    
-                    if datos['crecimiento_ganancias'] > 0:
-                        self.result_text.insert(tk.END, "\n")
-                    else:
-                        self.result_text.insert(tk.END, "\n")
-                    
-                    self.result_text.insert(tk.END, f"     Aumento trabajos: {datos['aumento_trabajos']}\n")
-                    self.result_text.insert(tk.END, f"     Aumento clientes: {datos['aumento_clientes']}\n")
-                self.result_text.insert(tk.END, "\n")
-            
-            # Análisis de tendencia
-            self.result_text.insert(tk.END, " ANÁLISIS DE TENDENCIA:\n")
-            
-            ganancias = [comparativa['datos_por_año'][a]['ganancias'] for a in sorted(años)]
-            if len(ganancias) >= 2:
-                crecimiento_total = ((ganancias[-1] - ganancias[0]) / ganancias[0]) * 100
-                crecimiento_promedio = crecimiento_total / (len(ganancias) - 1) if len(ganancias) > 1 else 0
+                for periodo, datos_crecimiento in comparativa['crecimiento'].items():
+                    self.result_text.insert(tk.END, f"   • {periodo}: {datos_crecimiento['crecimiento_ganancias']:.1f}% ")
                 
-                self.result_text.insert(tk.END, f"   • Crecimiento total: {crecimiento_total:.1f}%\n")
-                self.result_text.insert(tk.END, f"   • Crecimiento promedio anual: {crecimiento_promedio:.1f}%\n")
-                
-                if crecimiento_promedio > 15:
-                    self.result_text.insert(tk.END, "   • Tendencia:  CRECIMIENTO FUERTE\n")
-                elif crecimiento_promedio > 5:
-                    self.result_text.insert(tk.END, "   • Tendencia:  CRECIMIENTO ESTABLE\n")
-                elif crecimiento_promedio > 0:
-                    self.result_text.insert(tk.END, "   • Tendencia:   CRECIMIENTO LENTO\n")
+                if datos_crecimiento['crecimiento_ganancias'] > 0:
+                    self.result_text.insert(tk.END, "\n")
                 else:
-                    self.result_text.insert(tk.END, "   • Tendencia:  DECRECIMIENTO\n")
+                    self.result_text.insert(tk.END, "\n")
+                
+                self.result_text.insert(tk.END, f"     Aumento trabajos: {datos_crecimiento['aumento_trabajos']}\n")
+                self.result_text.insert(tk.END, f"     Aumento clientes: {datos_crecimiento['aumento_clientes']}\n")
+            self.result_text.insert(tk.END, "\n")
+        
+        # Análisis de tendencia financiera
+            self.result_text.insert(tk.END, " ANÁLISIS DE TENDENCIA FINANCIERA:\n")
+        
+            ingresos_por_año = [comparativa['datos_por_año'][a].get('ingresos', 
+                                comparativa['datos_por_año'][a].get('ganancias', 0)) 
+                                for a in sorted(años)]
+            ganancias_por_año = [comparativa['datos_por_año'][a].get('ganancias_netas', 0) 
+                                for a in sorted(años)]
+        
+            if len(ingresos_por_año) >= 2:
+            # Crecimiento de ingresos
+                crecimiento_ingresos = ((ingresos_por_año[-1] - ingresos_por_año[0]) / 
+                                       ingresos_por_año[0]) * 100 if ingresos_por_año[0] > 0 else 0
             
-            # Preguntar por gráfica
-            respuesta = messagebox.askyesno("Generar Gráfica", 
-                "¿Desea generar gráfica comparativa?")
+            # Crecimiento de ganancias
+                crecimiento_ganancias = ((ganancias_por_año[-1] - ganancias_por_año[0]) / 
+                                        ganancias_por_año[0]) * 100 if ganancias_por_año[0] > 0 else 0
             
+                self.result_text.insert(tk.END, f"   • Crecimiento ingresos totales: {crecimiento_ingresos:.1f}%\n")
+                self.result_text.insert(tk.END, f"   • Crecimiento ganancias netas: {crecimiento_ganancias:.1f}%\n")
+            
+            # Análisis de eficiencia
+                if ingresos_por_año[-1] > 0:
+                    margen_inicial = (ganancias_por_año[0] / ingresos_por_año[0]) * 100 if ingresos_por_año[0] > 0 else 0
+                    margen_final = (ganancias_por_año[-1] / ingresos_por_año[-1]) * 100 if ingresos_por_año[-1] > 0 else 0
+                    mejora_margen = margen_final - margen_inicial
+                
+                    self.result_text.insert(tk.END, f"   • Mejora en margen: {mejora_margen:+.1f}%\n")
+            
+            # Interpretación
+                self.result_text.insert(tk.END, "\n INTERPRETACIÓN:\n")
+            
+                if crecimiento_ganancias > crecimiento_ingresos:
+                    self.result_text.insert(tk.END, "    EFICIENCIA MEJORANDO\n")
+                    self.result_text.insert(tk.END, "   Las ganancias crecen más rápido que los ingresos\n")
+                elif crecimiento_ganancias > 0:
+                    self.result_text.insert(tk.END, "    CRECIMIENTO SALUDABLE\n")
+                    self.result_text.insert(tk.END, "   Ingresos y ganancias creciendo\n")
+                else:
+                    self.result_text.insert(tk.END, "    REVISIÓN NECESARIA\n")
+                    self.result_text.insert(tk.END, "   Evaluar costos y precios\n")
+        
+        # Preguntar por gráfica
+            respuesta = messagebox.askyesno("Generar Gráfica", "¿Desea generar gráfica comparativa?")
+        
             if respuesta:
                 try:
                     fig = self.taller.reportes.crear_grafica_comparativa_años(comparativa)
@@ -3220,87 +3346,101 @@ class TallerSEYMOGUI:
             
             # Calcular tendencia lineal
             años_ordenados = sorted(años)
-            ganancias = [comparativa['datos_por_año'][a]['ganancias'] for a in años_ordenados]
-            
-            if len(ganancias) >= 3:
+            ingresos = [comparativa['datos_por_año'][a].get('ingresos', comparativa['datos_por_año'][a].get('ganancias', 0)) for a in años_ordenados]
+            ganancias_netas = [comparativa['datos_por_año'][a].get('ganancias_netas', 0) for a in años_ordenados]
+            if len(ingresos) >= 3:
                 # Calcular regresión lineal simple
                 x = np.arange(len(años_ordenados))
-                y = np.array(ganancias)
+                y_ingresos = np.array(ingresos)
+                y_ganancias = np.array(ganancias_netas)
                 
                 # Coeficiente de correlación
-                correlacion = np.corrcoef(x, y)[0, 1] if len(ganancias) > 1 else 0
+                correlacion_ingresos = np.corrcoef(x, y_ingresos)[0, 1] if len(ingresos) > 1 else 0
+                correlacion_ganancias = np.corrcoef(x, y_ganancias)[0, 1] if len(ganancias_netas) > 1 else 0
                 
                 # Tendencia
-                z = np.polyfit(x, y, 1)
-                pendiente = z[0]
-                tendencia_por_año = (pendiente / np.mean(y)) * 100 if np.mean(y) > 0 else 0
+                z_ingresos = np.polyfit(x, y_ingresos, 1)
+                z_ganancias = np.polyfit(x, y_ganancias, 1)
+
+                pendiente_ingresos = z_ingresos[0]
+                pendiente_ganancias = z_ganancias[0]
                 
+                tendencia_ingresos = (pendiente_ingresos / np.mean(y_ingresos)) * 100 if np.mean(y_ingresos) > 0 else 0
+                tendencia_ganancias = (pendiente_ganancias / np.mean(y_ganancias)) * 100 if np.mean(y_ganancias) > 0 else 0
+
                 self.result_text.insert(tk.END, " ANÁLISIS ESTADÍSTICO:\n")
-                self.result_text.insert(tk.END, f"   • Correlación año-ganancias: {correlacion:.3f}\n")
-                self.result_text.insert(tk.END, f"   • Tendencia anual: {tendencia_por_año:.1f}%\n")
-                self.result_text.insert(tk.END, f"   • Variabilidad: {np.std(ganancias)/np.mean(ganancias)*100:.1f}%\n\n")
-                
+                self.result_text.insert(tk.END, f"   • Correlación año-ingresos: {correlacion_ingresos:.3f}\n")
+                self.result_text.insert(tk.END, f"   • Correlación año-ganancias: {correlacion_ganancias:.3f}\n")
+                self.result_text.insert(tk.END, f"   • Tendencia ingresos anual: {tendencia_ingresos:.1f}%\n")
+                self.result_text.insert(tk.END, f"   • Tendencia ganancias anual: {tendencia_ganancias:.1f}%\n")
+                self.result_text.insert(tk.END, f"   • Variabilidad ingresos: {np.std(ingresos)/np.mean(ingresos)*100:.1f}%\n")
+                self.result_text.insert(tk.END, f"   • Variabilidad ganancias: {np.std(ganancias_netas)/np.mean(ganancias_netas)*100:.1f}%\n\n")
+
                 # Interpretación
-                self.result_text.insert(tk.END, " INTERPRETACIÓN:\n")
+                self.result_text.insert(tk.END, " INTERPRETACIÓN FINANCIERA:\n")
                 
-                if abs(correlacion) > 0.7:
-                    if correlacion > 0:
-                        self.result_text.insert(tk.END, "   •  FUERTE TENDENCIA POSITIVA\n")
-                        self.result_text.insert(tk.END, "     Las ganancias crecen consistentemente con el tiempo\n")
+                if abs(correlacion_ingresos) > 0.7:
+                    if correlacion_ingresos > 0:
+                        self.result_text.insert(tk.END, "   •  FUERTE TENDENCIA POSITIVA EN INGRESOS\n")
                     else:
-                        self.result_text.insert(tk.END, "   •  FUERTE TENDENCIA NEGATIVA\n")
-                        self.result_text.insert(tk.END, "     Las ganancias disminuyen consistentemente\n")
-                elif abs(correlacion) > 0.3:
-                    if correlacion > 0:
-                        self.result_text.insert(tk.END, "   •   TENDENCIA MODERADA POSITIVA\n")
+                        self.result_text.insert(tk.END, "   •  FUERTE TENDENCIA NEGATIVA EN INGRESOS\n")
+                elif abs(correlacion_ingresos) > 0.3:
+                    if correlacion_ingresos > 0:
+                        self.result_text.insert(tk.END, "   •   TENDENCIA MODERADA EN INGRESOS\n")
                     else:
-                        self.result_text.insert(tk.END, "   •   TENDENCIA MODERADA NEGATIVA\n")
+                        self.result_text.insert(tk.END, "   •   TENDENCIA MODERADA EN INGRESOS\n")
                 else:
-                    self.result_text.insert(tk.END, "   •   TENDENCIA DÉBIL O INESTABLE\n")
-                    self.result_text.insert(tk.END, "     Las ganancias no muestran un patrón claro\n")
+                    self.result_text.insert(tk.END, "   •   TENDENCIA DÉBIL EN INGRESOS\n")
                 
+                if tendencia_ganancias > tendencia_ingresos:
+                    self.result_text.insert(tk.END, "   •  EFICIENCIA MEJORANDO\n")
+                    self.result_text.insert(tk.END, "     Las ganancias crecen más rápido que los ingresos\n")
+                elif tendencia_ganancias > 0:
+                    self.result_text.insert(tk.END, "   •  CRECIMIENTO PARALELO\n")
+                    self.result_text.insert(tk.END, "     Ingresos y ganancias crecen similarmente\n")
+                else:
+                    self.result_text.insert(tk.END, "   •  EFICIENCIA DISMINUYENDO\n")
+                    self.result_text.insert(tk.END, "     Evaluar costos y estructura de precios\n")
+            
                 self.result_text.insert(tk.END, "\n")
             
-            # Análisis de estacionalidad
-            self.result_text.insert(tk.END, " ANÁLISIS DE ESTACIONALIDAD:\n")
+            self.result_text.insert(tk.END, " ANÁLISIS DE EFICIENCIA FINANCIERA:\n")
+        
+            margenes = []
+            for año in años_ordenados:
+                ingresos_año = comparativa['datos_por_año'][año].get('ingresos', comparativa['datos_por_año'][año].get('ganancias', 0))
+                ganancias_año = comparativa['datos_por_año'][año].get('ganancias_netas', 0)
             
-            # Obtener datos mensuales del último año
-            ultimo_año = max(años)
-            try:
-                reporte_ultimo = self.taller.reportes.reporte_año_especifico(ultimo_año)
-                if reporte_ultimo['ganancias_por_mes']:
-                    ganancias_mensuales = [(int(mes[0]), float(mes[1])) for mes in reporte_ultimo['ganancias_por_mes']]
-                    ganancias_mensuales.sort(key=lambda x: x[1], reverse=True)
-                    
-                    if ganancias_mensuales:
-                        self.result_text.insert(tk.END, f"   • Mejores meses ({ultimo_año}):\n")
-                        for i in range(min(3, len(ganancias_mensuales))):
-                            mes_num, ganancia = ganancias_mensuales[i]
-                            self.result_text.insert(tk.END, f"     {calendar.month_name[mes_num]}: Q{ganancia:,.2f}\n")
-                        
-                        self.result_text.insert(tk.END, f"   • Meses más bajos ({ultimo_año}):\n")
-                        for i in range(-1, -4, -1):
-                            if abs(i) <= len(ganancias_mensuales):
-                                mes_num, ganancia = ganancias_mensuales[i]
-                                self.result_text.insert(tk.END, f"     {calendar.month_name[mes_num]}: Q{ganancia:,.2f}\n")
-            except:
-                pass
+                if ingresos_año > 0:
+                    margen = (ganancias_año / ingresos_año) * 100
+                    margenes.append(margen)
+                    self.result_text.insert(tk.END, f"   • {año}: Margen = {margen:.1f}%\n")
+            if len(margenes) >= 2:
+                mejora_margen = margenes[-1] - margenes[0]
+                self.result_text.insert(tk.END, f"   • Mejora total en margen: {mejora_margen:+.1f}%\n")
             
-            # Recomendaciones basadas en tendencia
+                if mejora_margen > 2:
+                    self.result_text.insert(tk.END, "      Excelente mejora en eficiencia\n")
+                elif mejora_margen > 0:
+                    self.result_text.insert(tk.END, "      Mejora moderada en eficiencia\n")
+                else:
+                    self.result_text.insert(tk.END, "      Eficiencia disminuyendo - revisar costos\n")
+        
+        # Recomendaciones basadas en tendencia
             self.result_text.insert(tk.END, "\n RECOMENDACIONES ESTRATÉGICAS:\n")
+        
+            if len(ganancias_netas) >= 2:
+                crecimiento_total_ganancias = ((ganancias_netas[-1] - ganancias_netas[0]) / ganancias_netas[0]) * 100 if ganancias_netas[0] > 0 else 0
             
-            if len(ganancias) >= 2:
-                crecimiento_total = ((ganancias[-1] - ganancias[0]) / ganancias[0]) * 100
-                
-                if crecimiento_total > 50:
+                if crecimiento_total_ganancias > 50:
                     self.result_text.insert(tk.END, "   1.  Crecimiento excelente - Mantener estrategias\n")
                     self.result_text.insert(tk.END, "   2.  Considerar reinversión de utilidades\n")
                     self.result_text.insert(tk.END, "   3.  Evaluar expansión del negocio\n")
-                elif crecimiento_total > 20:
+                elif crecimiento_total_ganancias > 20:
                     self.result_text.insert(tk.END, "   1.  Crecimiento saludable - Optimizar procesos\n")
                     self.result_text.insert(tk.END, "   2.  Fortalecer programas de fidelización\n")
                     self.result_text.insert(tk.END, "   3.  Mejorar eficiencia operativa\n")
-                elif crecimiento_total > 0:
+                elif crecimiento_total_ganancias > 0:
                     self.result_text.insert(tk.END, "   1.   Crecimiento lento - Revisar estrategias\n")
                     self.result_text.insert(tk.END, "   2.  Analizar competencia y precios\n")
                     self.result_text.insert(tk.END, "   3.  Implementar nuevas tácticas de marketing\n")
@@ -3308,17 +3448,21 @@ class TallerSEYMOGUI:
                     self.result_text.insert(tk.END, "   1.  Crecimiento negativo - Acción inmediata\n")
                     self.result_text.insert(tk.END, "   2.  Revisar costos y precios urgentemente\n")
                     self.result_text.insert(tk.END, "   3.  Analizar causas de la disminución\n")
-            
-            # Proyección para el próximo año
+        
+        # Proyección para el próximo año
             self.result_text.insert(tk.END, "\n PROYECCIÓN PARA EL PRÓXIMO AÑO:\n")
+        
+            if len(ganancias_netas) >= 2:
+                crecimiento_promedio_ganancias = ((ganancias_netas[-1] - ganancias_netas[0]) / ganancias_netas[0]) * 100 / (len(ganancias_netas) - 1)
+                proyeccion_ganancias = ganancias_netas[-1] * (1 + crecimiento_promedio_ganancias/100)
             
-            if len(ganancias) >= 2:
-                crecimiento_promedio = ((ganancias[-1] - ganancias[0]) / ganancias[0]) * 100 / (len(ganancias) - 1)
-                proyeccion = ganancias[-1] * (1 + crecimiento_promedio/100)
-                
-                self.result_text.insert(tk.END, f"   • Ganancias proyectadas: Q{proyeccion:,.2f}\n")
-                self.result_text.insert(tk.END, f"   • Crecimiento esperado: {crecimiento_promedio:.1f}%\n")
-                self.result_text.insert(tk.END, f"   • Trabajos estimados: {comparativa['datos_por_año'][ultimo_año]['trabajos'] * (1 + crecimiento_promedio/100):.0f}\n")
+                crecimiento_promedio_ingresos = ((ingresos[-1] - ingresos[0]) / ingresos[0]) * 100 / (len(ingresos) - 1)
+                proyeccion_ingresos = ingresos[-1] * (1 + crecimiento_promedio_ingresos/100)
+            
+                self.result_text.insert(tk.END, f"   • Ingresos proyectados: Q{proyeccion_ingresos:,.2f}\n")
+                self.result_text.insert(tk.END, f"   • Ganancias proyectadas: Q{proyeccion_ganancias:,.2f}\n")
+                self.result_text.insert(tk.END, f"   • Crecimiento esperado: {crecimiento_promedio_ganancias:.1f}%\n")
+                self.result_text.insert(tk.END, f"   • Trabajos estimados: {comparativa['datos_por_año'][max(años)]['trabajos'] * (1 + crecimiento_promedio_ganancias/100):.0f}\n")
             
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo generar el análisis de tendencia: {e}")
