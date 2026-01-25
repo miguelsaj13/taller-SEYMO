@@ -2968,8 +2968,8 @@ class TallerSEYMOGUI:
             (" Nuevo Empleado", self.registrar_empleado),
             (" Nueva Orden", self.nueva_orden),
             (" Buscar Cliente", self.buscar_cliente),
-            (" Reportes", self.menu_reportes_mejorado),  # ACTUALIZADO
-            (" Proyección", self.menu_proyeccion)  # NUEVO BOTÓN
+            (" Reportes", self.menu_reportes_mejorado),  
+            (" Proyección", self.menu_proyeccion)
         ]
         
         # Creo cada botón de la primera fila
@@ -3913,233 +3913,273 @@ class TallerSEYMOGUI:
         dialog.geometry("500x600")
         dialog.transient(self.root)
         dialog.grab_set()
-        
+    
         def generar_reporte_con_graficas(periodo):
             """Genera un reporte completo con todas las gráficas"""
-            reporte = self.taller.reportes.reporte_periodo(periodo)
+            try:
+            # Generar reporte del período
+                reporte = self.taller.reportes.reporte_periodo(periodo)
             
             # Muestro el reporte en el área de resultados
-            self.clear_results()
-            self.result_text.insert(tk.END, f"\n{'='*60}\n")
-            self.result_text.insert(tk.END, f" REPORTE {periodo.upper()}\n")
-            self.result_text.insert(tk.END, f"{'='*60}\n\n")
-            self.result_text.insert(tk.END, f" Período: {reporte['fecha_inicio']} al {datetime.now().date()}\n\n")
-            self.result_text.insert(tk.END, f" Ganancias totales: Q{reporte['ganancias']:.2f}\n")
-            self.result_text.insert(tk.END, f"  Horas trabajadas: {reporte['horas_trabajadas']:.1f}\n")
-            self.result_text.insert(tk.END, f" Trabajos completados: {reporte['trabajos_completados']}\n")
+                self.clear_results()
+                self.result_text.insert(tk.END, f"\n{'='*60}\n")
+                self.result_text.insert(tk.END, f" REPORTE {periodo.upper()}\n")
+                self.result_text.insert(tk.END, f"{'='*60}\n\n")
             
-            # Muestro los servicios más populares
-            if reporte['servicios_populares']:
-                self.result_text.insert(tk.END, f"\n SERVICIOS MÁS POPULARES:\n")
-                for servicio, cantidad, total in reporte['servicios_populares']:
-                    self.result_text.insert(tk.END, f"   • {servicio}: {cantidad} trabajos (Q{total:.2f})\n")
+            # Fecha del período
+                self.result_text.insert(tk.END, f" Período: {reporte['fecha_inicio']} al {datetime.now().date()}\n\n")
+            
+            # Métricas principales
+                self.result_text.insert(tk.END, f" Ganancias totales: Q{reporte.get('ingresos_totales', reporte.get('ganancias', 0)):,.2f}\n")
+                self.result_text.insert(tk.END, f" Ganancias netas: Q{reporte.get('ganancias_netas', 0):,.2f}\n")
+                self.result_text.insert(tk.END, f" Horas trabajadas: {reporte.get('horas_trabajadas', reporte.get('horas_totales', 0)):.1f}\n")
+                self.result_text.insert(tk.END, f" Trabajos completados: {reporte.get('trabajos_completados', reporte.get('trabajos_totales', 0))}\n")
+                self.result_text.insert(tk.END, f" Costo repuestos: Q{reporte.get('costo_repuestos', 0):,.2f}\n\n")
+            
+            # Servicios más populares
+                if 'servicios_populares' in reporte and reporte['servicios_populares']:
+                    self.result_text.insert(tk.END, f" SERVICIOS MÁS POPULARES:\n")
+                    for servicio in reporte['servicios_populares']:
+                        if len(servicio) >= 3:
+                            servicio_nombre, cantidad, total = servicio
+                            self.result_text.insert(tk.END, f"   • {servicio_nombre}: {cantidad} trabajos (Q{total:.2f})\n")
+                        elif len(servicio) == 2:
+                            servicio_nombre, cantidad = servicio
+                            self.result_text.insert(tk.END, f"   • {servicio_nombre}: {cantidad} trabajos\n")
+                    self.result_text.insert(tk.END, "\n")
+            
+            # Empleados más productivos
+                if 'empleados_productivos' in reporte and reporte['empleados_productivos']:
+                    self.result_text.insert(tk.END, f" EMPLEADOS MÁS PRODUCTIVOS:\n")
+                    for empleado in reporte['empleados_productivos']:
+                        if len(empleado) >= 3:
+                            nombre, trabajos, ingresos = empleado
+                            self.result_text.insert(tk.END, f"   • {nombre}: {trabajos} trabajos (Q{ingresos:.2f})\n")
+                    self.result_text.insert(tk.END, "\n")
             
             # Cierro el diálogo
-            dialog.destroy()
+                dialog.destroy()
             
             # Pregunto si quiere generar gráficas
-            respuesta = messagebox.askyesno("Generar Gráficas", 
-                f"¿Desea generar gráficas para el reporte {periodo}?")
-            
-            if respuesta:
-                try:
+                respuesta = messagebox.askyesno("Generar Gráficas", 
+                    f"¿Desea generar gráficas para el reporte {periodo}?")
+
+                if respuesta:
+                    try:
                     # 1. Gráfica de servicios populares
-                    fig1 = self.taller.reportes.crear_grafica_servicios_populares(reporte)
-                    if fig1:
-                        self.mostrar_grafica(fig1, f"Servicios Populares - {periodo.capitalize()}")
+                        fig1 = self.taller.reportes.crear_grafica_servicios_populares(reporte)
+                        if fig1:
+                            self.mostrar_grafica(fig1, f"Servicios Populares - {periodo.capitalize()}")
                     
                     # 2. Gráfica de ganancias diarias
-                    fig2 = self.taller.reportes.crear_grafica_ganancias_diarias(reporte)
-                    if fig2:
-                        self.mostrar_grafica(fig2, f"Ganancias Diarias - {periodo.capitalize()}")
+                        fig2 = self.taller.reportes.crear_grafica_ganancias_diarias(reporte)
+                        if fig2:
+                            self.mostrar_grafica(fig2, f"Ganancias Diarias - {periodo.capitalize()}")
                     
                     # 3. Gráfica de vehículos frecuentes
-                    fig3 = self.taller.reportes.crear_grafica_vehiculos_frecuentes(reporte)
-                    if fig3:
-                        self.mostrar_grafica(fig3, f"Vehículos Frecuentes - {periodo.capitalize()}")
+                        fig3 = self.taller.reportes.crear_grafica_vehiculos_frecuentes(reporte)
+                        if fig3:
+                            self.mostrar_grafica(fig3, f"Vehículos Frecuentes - {periodo.capitalize()}")
                     
                     # 4. Gráfica de empleados productivos
-                    fig4 = self.taller.reportes.crear_grafica_empleados_productivos(reporte)
-                    if fig4:
-                        self.mostrar_grafica(fig4, f"Empleados Productivos - {periodo.capitalize()}")
+                        fig4 = self.taller.reportes.crear_grafica_empleados_productivos(reporte)
+                        if fig4:
+                            self.mostrar_grafica(fig4, f"Empleados Productivos - {periodo.capitalize()}")
                     
                     # 5. Gráfica de estadísticas generales
-                    fig5 = self.taller.reportes.crear_grafica_estadisticas_generales(reporte)
-                    if fig5:
-                        self.mostrar_grafica(fig5, f"Estadísticas Generales - {periodo.capitalize()}")
+                        fig5 = self.taller.reportes.crear_grafica_estadisticas_generales(reporte)
+                        if fig5:
+                            self.mostrar_grafica(fig5, f"Estadísticas Generales - {periodo.capitalize()}")
                     
-                    messagebox.showinfo("Gráficas generadas", 
-                                      "Todas las gráficas han sido generadas exitosamente.")
+                        messagebox.showinfo("Gráficas generadas", "Las gráficas han sido generadas exitosamente.")
                     
-                except Exception as e:
-                    messagebox.showerror("Error", f"No se pudieron generar todas las gráficas: {e}")
+                    except Exception as e:
+                        messagebox.showerror("Error", f"No se pudieron generar todas las gráficas: {e}")
         
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo generar el reporte: {e}")
+    
         def generar_reporte_clientes():
             """Genera reporte de clientes con gráficas"""
-            reporte_clientes = self.taller.reportes.reporte_clientes()
+            try:
+                reporte_clientes = self.taller.reportes.reporte_clientes()
             
             # Muestro el reporte
-            self.clear_results()
-            self.result_text.insert(tk.END, f"\n{'='*60}\n")
-            self.result_text.insert(tk.END, " REPORTE DE CLIENTES\n")
-            self.result_text.insert(tk.END, f"{'='*60}\n\n")
-            self.result_text.insert(tk.END, f" Total de clientes: {reporte_clientes['total_clientes']}\n\n")
+                self.clear_results()
+                self.result_text.insert(tk.END, f"\n{'='*60}\n")
+                self.result_text.insert(tk.END, " REPORTE DE CLIENTES\n")
+                self.result_text.insert(tk.END, f"{'='*60}\n\n")
+                self.result_text.insert(tk.END, f" Total de clientes: {reporte_clientes['total_clientes']}\n\n")
             
-            if reporte_clientes['clientes_frecuentes']:
-                self.result_text.insert(tk.END, " CLIENTES MÁS FRECUENTES:\n")
-                for cliente, ordenes, gasto_total in reporte_clientes['clientes_frecuentes']:
-                    self.result_text.insert(tk.END, f"   • {cliente}: {ordenes} órdenes (Gasto total: Q{gasto_total:.2f})\n")
+                if reporte_clientes['clientes_frecuentes']:
+                    self.result_text.insert(tk.END, " CLIENTES MÁS FRECUENTES:\n")
+                    for cliente in reporte_clientes['clientes_frecuentes'][:10]:  # Top 10
+                        if len(cliente) >= 3:
+                            nombre, ordenes, gasto_total = cliente
+                            self.result_text.insert(tk.END, f"   • {nombre}: {ordenes} órdenes (Gasto total: Q{gasto_total:.2f})\n")
+                        elif len(cliente) == 2:
+                            nombre, ordenes = cliente
+                            self.result_text.insert(tk.END, f"   • {nombre}: {ordenes} órdenes\n")
             
-            dialog.destroy()
+                dialog.destroy()
             
             # Preguntar por gráficas
-            respuesta = messagebox.askyesno("Gráficas de Clientes", 
-                "¿Desea generar gráficas del reporte de clientes?")
+                respuesta = messagebox.askyesno("Gráficas de Clientes", 
+                    "¿Desea generar gráficas del reporte de clientes?")
             
-            if respuesta:
-                try:
+                if respuesta:
+                    try:
                     # 1. Gráfica de clientes frecuentes
-                    fig1 = self.taller.reportes.crear_grafica_clientes_frecuentes(reporte_clientes)
-                    if fig1:
-                        self.mostrar_grafica(fig1, "Clientes Más Frecuentes")
+                        fig1 = self.taller.reportes.crear_grafica_clientes_frecuentes(reporte_clientes)
+                        if fig1:
+                            self.mostrar_grafica(fig1, "Clientes Más Frecuentes")
                     
                     # 2. Gráfica de distribución de vehículos
-                    fig2 = self.taller.reportes.crear_grafica_distribucion_vehiculos(reporte_clientes)
-                    if fig2:
-                        self.mostrar_grafica(fig2, "Distribución de Vehículos por Cliente")
+                        fig2 = self.taller.reportes.crear_grafica_distribucion_vehiculos(reporte_clientes)
+                        if fig2:
+                            self.mostrar_grafica(fig2, "Distribución de Vehículos por Cliente")
                     
-                except Exception as e:
-                    messagebox.showerror("Error", f"No se pudieron generar las gráficas: {e}")
+                    except Exception as e:
+                        messagebox.showerror("Error", f"No se pudieron generar las gráficas: {e}")
         
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo generar el reporte de clientes: {e}")
+    
         def generar_reporte_empleados():
             """Genera reporte de empleados con gráficas"""
-            reporte_empleados = self.taller.reportes.reporte_empleados()
+            try:
+                reporte_empleados = self.taller.reportes.reporte_empleados()
             
             # Muestro el reporte
-            self.clear_results()
-            self.result_text.insert(tk.END, f"\n{'='*60}\n")
-            self.result_text.insert(tk.END, " REPORTE DE EMPLEADOS\n")
-            self.result_text.insert(tk.END, f"{'='*60}\n\n")
-            self.result_text.insert(tk.END, f" Total de empleados: {reporte_empleados['total_empleados']}\n\n")
+                self.clear_results()
+                self.result_text.insert(tk.END, f"\n{'='*60}\n")
+                self.result_text.insert(tk.END, " REPORTE DE EMPLEADOS\n")
+                self.result_text.insert(tk.END, f"{'='*60}\n\n")
+                self.result_text.insert(tk.END, f" Total de empleados: {reporte_empleados['total_empleados']}\n\n")
             
-            if reporte_empleados['empleados']:
-                self.result_text.insert(tk.END, " PRODUCTIVIDAD DE EMPLEADOS:\n")
-                for empleado in reporte_empleados['empleados']:
-                    nombre, ordenes, horas, ingresos, promedio, ultimo = empleado
-                    self.result_text.insert(tk.END, f"\n    {nombre}:\n")
-                    self.result_text.insert(tk.END, f"      • Órdenes: {ordenes or 0}\n")
-                    self.result_text.insert(tk.END, f"      • Horas trabajadas: {horas or 0:.1f}\n")
-                    self.result_text.insert(tk.END, f"      • Ingresos generados: Q{ingresos or 0:.2f}\n")
-                    if promedio:
-                        self.result_text.insert(tk.END, f"      • Promedio por orden: Q{promedio:.2f}\n")
-                    if ultimo:
-                        self.result_text.insert(tk.END, f"      • Último trabajo: {ultimo}\n")
+                if reporte_empleados['empleados']:
+                    self.result_text.insert(tk.END, " PRODUCTIVIDAD DE EMPLEADOS:\n")
+                    for empleado in reporte_empleados['empleados']:
+                        if len(empleado) >= 6:
+                            nombre, total_ordenes, total_horas, total_ingresos, promedio_por_orden, ultimo_trabajo = empleado
+                            self.result_text.insert(tk.END, f"\n   {nombre}:\n")
+                            self.result_text.insert(tk.END, f"     • Órdenes: {total_ordenes or 0}\n")
+                            self.result_text.insert(tk.END, f"     • Horas trabajadas: {total_horas or 0:.1f}\n")
+                            self.result_text.insert(tk.END, f"     • Ingresos generados: Q{total_ingresos or 0:.2f}\n")
+                            if promedio_por_orden:
+                                self.result_text.insert(tk.END, f"     • Promedio por orden: Q{promedio_por_orden:.2f}\n")
+                            if ultimo_trabajo:
+                                self.result_text.insert(tk.END, f"     • Último trabajo: {ultimo_trabajo}\n")
             
-            dialog.destroy()
+                dialog.destroy()
             
             # Preguntar por gráficas
-            respuesta = messagebox.askyesno("Gráficas de Empleados", 
-                "¿Desea generar gráficas del reporte de empleados?")
+                respuesta = messagebox.askyesno("Gráficas de Empleados", 
+                    "¿Desea generar gráficas del reporte de empleados?")
             
-            if respuesta:
-                try:
+                if respuesta:
+                    try:
                     # Gráfica de productividad de empleados
-                    fig = self.taller.reportes.crear_grafica_productividad_empleados(reporte_empleados)
-                    if fig:
-                        self.mostrar_grafica(fig, "Productividad de Empleados")
+                        fig = self.taller.reportes.crear_grafica_productividad_empleados(reporte_empleados)
+                        if fig:
+                            self.mostrar_grafica(fig, "Productividad de Empleados")
                     
-                except Exception as e:
-                    messagebox.showerror("Error", f"No se pudo generar la gráfica: {e}")
+                    except Exception as e:
+                        messagebox.showerror("Error", f"No se pudo generar la gráfica: {e}")
         
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo generar el reporte de empleados: {e}")
+    
         def mostrar_proyeccion_simple():
             """Muestra proyecciones de crecimiento simple con gráfica"""
-            proyeccion = self.taller.reportes.proyeccion_crecimiento()
+            try:
+                proyeccion = self.taller.reportes.proyeccion_crecimiento_avanzada(años_historia=2)
             
-            if not proyeccion:
-                messagebox.showinfo("Información", "No hay suficientes datos históricos (se necesitan al menos 2 meses) para generar proyecciones")
-                return
+                if not proyeccion:
+                    messagebox.showinfo("Información", "No hay suficientes datos históricos (se necesitan al menos 2 años) para generar proyecciones")
+                    return
             
             # Muestro las proyecciones
-            self.clear_results()
-            self.result_text.insert(tk.END, f"\n{'='*60}\n")
-            self.result_text.insert(tk.END, " PROYECCIÓN DE CRECIMIENTO\n")
-            self.result_text.insert(tk.END, f"{'='*60}\n\n")
+                self.clear_results()
+                self.result_text.insert(tk.END, f"\n{'='*60}\n")
+                self.result_text.insert(tk.END, " PROYECCIÓN DE CRECIMIENTO\n")
+                self.result_text.insert(tk.END, f"{'='*60}\n\n")
             
-            # Muestro datos históricos si los hay
-            if 'datos_historicos' in proyeccion and proyeccion['datos_historicos']:
-                self.result_text.insert(tk.END, " DATOS HISTÓRICOS (últimos 6 meses):\n")
-                for mes, total in proyeccion['datos_historicos']:
-                    self.result_text.insert(tk.END, f"   {mes}: Q{total:.2f}\n")
-                self.result_text.insert(tk.END, "\n")
+            # Mostrar datos históricos
+                if 'datos_historicos' in proyeccion and proyeccion['datos_historicos']:
+                    self.result_text.insert(tk.END, " DATOS HISTÓRICOS:\n")
+                    for año, datos in proyeccion['datos_historicos'].items():
+                        self.result_text.insert(tk.END, f"   Año {año}: Q{datos['ganancias_totales']:,.2f}\n")
+                    self.result_text.insert(tk.END, "\n")
             
-            # Muestro el crecimiento promedio
-            self.result_text.insert(tk.END, f" Crecimiento promedio: {proyeccion['crecimiento_promedio']*100:.1f}% mensual\n")
+            # Mostrar el crecimiento promedio
+                self.result_text.insert(tk.END, f" Crecimiento promedio anual: {proyeccion.get('crecimiento_promedio_anual', 0):.1f}%\n")
             
-            # Muestro las proyecciones futuras
-            self.result_text.insert(tk.END, f"\n PROYECCIONES PRÓXIMOS 6 MESES:\n")
-            for mes, ingreso in proyeccion['proyecciones']:
-                self.result_text.insert(tk.END, f"   {mes}: Q{ingreso:.2f}\n")
+            # Mostrar proyecciones futuras
+                if 'proyecciones' in proyeccion and proyeccion['proyecciones']:
+                    self.result_text.insert(tk.END, f"\n PROYECCIONES FUTURAS:\n")
+                    for año, datos in proyeccion['proyecciones'].items():
+                        self.result_text.insert(tk.END, f"   Año {año}: Q{datos['ganancia_anual_proyectada']:,.2f}\n")
             
-            dialog.destroy()
+                dialog.destroy()
             
             # Preguntar por gráfica
-            respuesta = messagebox.askyesno("Gráfica de Proyección", 
-                "¿Desea generar una gráfica de la proyección de crecimiento?")
+                respuesta = messagebox.askyesno("Gráfica de Proyección", 
+                    "¿Desea generar una gráfica de la proyección de crecimiento?")
             
-            if respuesta:
-                try:
-                    fig = self.taller.reportes.crear_grafica_proyeccion(proyeccion)
-                    if fig:
-                        self.mostrar_grafica(fig, "Proyección de Crecimiento")
+                if respuesta:
+                    try:
+                        fig = self.taller.reportes.crear_grafica_proyeccion_avanzada(proyeccion)
+                        if fig:
+                            self.mostrar_grafica(fig, "Proyección de Crecimiento")
                     
-                except Exception as e:
-                    messagebox.showerror("Error", f"No se pudo generar la gráfica: {e}")
+                    except Exception as e:
+                        messagebox.showerror("Error", f"No se pudo generar la gráfica: {e}")
         
-        # Creo los elementos del menú de reportes
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo generar la proyección: {e}")
+    
+    # Creo los elementos del menú de reportes
         ttk.Label(dialog, text=" REPORTES AVANZADOS", font=("Arial", 14, "bold")).pack(pady=20)
-        
-        # Sección de reportes por período
+    
+    # Sección de reportes por período
         ttk.Label(dialog, text=" Reportes por Período:", font=("Arial", 11, "bold")).pack(pady=10, anchor="w")
-        
+    
         frame_periodo = tk.Frame(dialog)
         frame_periodo.pack(pady=10, padx=20, fill=tk.X)
-        
+    
         ttk.Button(frame_periodo, text=" Reporte Semanal", 
-                  command=lambda: generar_reporte_con_graficas('semana')).pack(pady=5, fill=tk.X)
+              command=lambda: generar_reporte_con_graficas('semana')).pack(pady=5, fill=tk.X)
         ttk.Button(frame_periodo, text=" Reporte Mensual", 
-                  command=lambda: generar_reporte_con_graficas('mes')).pack(pady=5, fill=tk.X)
+              command=lambda: generar_reporte_con_graficas('mes')).pack(pady=5, fill=tk.X)
         ttk.Button(frame_periodo, text=" Reporte Anual", 
-                  command=lambda: generar_reporte_con_graficas('año')).pack(pady=5, fill=tk.X)
-        
-        # Línea divisoria
+              command=lambda: generar_reporte_con_graficas('año')).pack(pady=5, fill=tk.X)
+    
+    # Línea divisoria
         tk.Frame(dialog, height=2, bg="gray").pack(fill=tk.X, padx=20, pady=10)
-        
-        # Sección de reportes específicos
+    
+    # Sección de reportes específicos
         ttk.Label(dialog, text=" Reportes Específicos:", font=("Arial", 11, "bold")).pack(pady=10, anchor="w")
-        
+    
         frame_especificos = tk.Frame(dialog)
         frame_especificos.pack(pady=10, padx=20, fill=tk.X)
-        
+    
         ttk.Button(frame_especificos, text=" Reporte de Clientes", 
-                  command=generar_reporte_clientes).pack(pady=5, fill=tk.X)
+              command=generar_reporte_clientes).pack(pady=5, fill=tk.X)
         ttk.Button(frame_especificos, text=" Reporte de Empleados", 
-                  command=generar_reporte_empleados).pack(pady=5, fill=tk.X)
-        
-        # Línea divisoria
+              command=generar_reporte_empleados).pack(pady=5, fill=tk.X)
+    
+    # Línea divisoria
         tk.Frame(dialog, height=2, bg="gray").pack(fill=tk.X, padx=20, pady=10)
-        
-        # Sección de proyecciones simples
-        ttk.Label(dialog, text=" Proyección Simple:", font=("Arial", 11, "bold")).pack(pady=10, anchor="w")
-        
+    
+    # Sección de proyecciones
+        ttk.Label(dialog, text=" Análisis Predictivo:", font=("Arial", 11, "bold")).pack(pady=10, anchor="w")
+    
         frame_proyecciones = tk.Frame(dialog)
         frame_proyecciones.pack(pady=10, padx=20, fill=tk.X)
-        
-        ttk.Button(frame_proyecciones, text=" Proyección de Crecimiento", 
-                  command=mostrar_proyeccion_simple).pack(pady=5, fill=tk.X)
     
-    # ==========================================================================
-    # FUNCIONES ORIGINALES (MANTENIDAS)
-    # ==========================================================================
+        ttk.Button(frame_proyecciones, text=" Proyección de Crecimiento", 
+              command=mostrar_proyeccion_simple).pack(pady=5, fill=tk.X)
     
     def clear_results(self):
         """Limpio el área de resultados"""
