@@ -1,8 +1,7 @@
 import sqlite3
-from tkinter import messagebox
 from taller.database.database_manager import DatabaseManager
 from taller.utils.validator import Validator
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 class OrdenManager:
     """Gestiona todo lo relacionado con órdenes de trabajo"""
@@ -15,6 +14,11 @@ class OrdenManager:
         """Verifica si una orden existe"""
         cursor = self.db.execute_query('SELECT id FROM ordenes_trabajo WHERE id = ?', (orden_id,))
         return cursor.fetchone() is not None
+    
+    def _calcular_precio_final(self,
+                           costo_repuestos: float,
+                           costo_mano_obra: float) -> float:
+         return costo_repuestos + costo_mano_obra
     
     def obtener_detalles_orden(self, orden_id: int) -> Optional[Dict]:
         """Obtiene todos los detalles de una orden"""
@@ -64,12 +68,12 @@ class OrdenManager:
         }
     
     def agregar_orden(self, numero_orden: int, vehiculo_id: int, empleado_id: int, 
-                     descripcion_trabajo: str, tipo_servicio: str, horas_trabajadas: float,
+                     descripcion_trabajo: str, tipo_servicio: str, servicios: List[int], horas_trabajadas: float,
                      costo_repuestos: float, costo_mano_obra: float, kilometraje: float,
                      unidad_kilometraje: str = 'km', fecha_fin: Optional[str] = None) -> str:
         """Agrega una nueva orden de trabajo"""
         
-        # Valido la fecha de finalización - SIEMPRE ES OBLIGATORIA
+        # Valido la fecha de finalización
         if not fecha_fin:
             return " Error: La fecha de finalización es obligatoria."
         
@@ -78,7 +82,7 @@ class OrdenManager:
             return " Error: Fecha de finalización inválida. Debe ser una fecha pasada o presente válida."
         
         # Calculo el precio total
-        precio_final = costo_repuestos + costo_mano_obra
+        precio_final = self._calcular_precio_final(costo_repuestos, costo_mano_obra)
         
         try:
             # Inserto la orden en la base de datos
@@ -91,7 +95,18 @@ class OrdenManager:
             ''', (numero_orden, vehiculo_id, empleado_id, descripcion_trabajo, tipo_servicio,
                   horas_trabajadas, costo_repuestos, costo_mano_obra, precio_final,
                   kilometraje, unidad_kilometraje, fecha_fin_validada))
-            
+            for servicio_id in servicios:
+                self.db.execute_query(
+                    '''
+                    INSERT INTO orden_servicios
+                    (orden_id, servicio_id)
+                    VALUES (?, ?)
+                    ''',
+                    (
+                        numero_orden,
+                        servicio_id
+                    )
+                )
             self.db.commit()
             return f" Orden #{numero_orden} agregada - Total: Q{precio_final:.2f} - Fecha: {fecha_fin_validada}"
         except sqlite3.IntegrityError as e:
@@ -137,20 +152,6 @@ class OrdenManager:
             if not detalles:
                 return " Error: No se pudieron obtener los detalles de la orden"
             
-            # Pido confirmación
-            confirmacion = messagebox.askyesno(
-                "Confirmar eliminación",
-                f"¿Está seguro de eliminar la orden #{orden_id}?\n\n"
-                f"Cliente: {detalles['cliente_nombre']}\n"
-                f"Vehículo: {detalles['vehiculo_marca']} {detalles['vehiculo_modelo']} - {detalles['vehiculo_placa']}\n"
-                f"Servicio: {detalles['tipo_servicio']}\n"
-                f"Total: Q{detalles['precio_final']:.2f}\n\n"
-                f" Esta acción NO se puede deshacer."
-            )
-            
-            if not confirmacion:
-                return " Eliminación cancelada por el usuario"
-            
             # Elimino la orden
             self.db.execute_query('DELETE FROM ordenes_trabajo WHERE id = ?', (orden_id,))
             self.db.commit()
@@ -161,5 +162,5 @@ class OrdenManager:
                    f"   Total reembolsado: Q{detalles['precio_final']:.2f}")
             
         except sqlite3.Error as e:
-            self.db.conn.rollback()
+            self.db.rollback()
             return f" Error al eliminar orden: {e}"

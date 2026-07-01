@@ -1,4 +1,4 @@
-class RecordatoriosService:
+class EstadisticasService:
 
     def __init__(self, db):
         self.db = db

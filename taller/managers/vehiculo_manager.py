@@ -1,5 +1,4 @@
 import sqlite3
-from tkinter import messagebox
 from taller.database.database_manager import DatabaseManager
 from taller.utils.validator import Validator
 from typing import Optional, Dict, List, Tuple
@@ -112,18 +111,6 @@ class VehiculoManager:
             cursor = self.db.execute_query('SELECT COUNT(*) FROM ordenes_trabajo WHERE vehiculo_id = ?', (vehiculo_id,))
             cantidad_ordenes = cursor.fetchone()[0]
             
-            # Pido confirmación
-            confirmacion = messagebox.askyesno(
-                "Confirmar eliminación",
-                f"¿Está seguro de eliminar el vehículo {marca} {modelo} - {placa}?\n\n"
-                f"Propietario: {nombre_cliente}\n"
-                f"Se eliminarán {cantidad_ordenes} órdenes de trabajo asociadas.\n\n"
-                f" Esta acción NO se puede deshacer."
-            )
-            
-            if not confirmacion:
-                return " Eliminación cancelada por el usuario"
-            
             # Elimino el vehículo (las claves foráneas eliminarán las órdenes en cascada)
             self.db.execute_query('DELETE FROM vehiculos WHERE id = ?', (vehiculo_id,))
             self.db.commit()
@@ -132,5 +119,5 @@ class VehiculoManager:
                    f"   Se eliminaron {cantidad_ordenes} órdenes de trabajo asociadas.")
             
         except sqlite3.Error as e:
-            self.db.conn.rollback()
+            self.db.rollback()
             return f" Error al eliminar vehículo: {e}"

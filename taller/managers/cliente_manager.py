@@ -1,5 +1,4 @@
 import sqlite3
-from tkinter import messagebox
 from taller.database.database_manager import DatabaseManager
 from taller.utils.validator import Validator
 from typing import Optional, Dict, List, Tuple
@@ -121,7 +120,6 @@ class ClienteManager:
             # Obtengo información del cliente antes de eliminarlo
             cursor = self.db.execute_query('SELECT nombre FROM clientes WHERE id = ?', (cliente_id,))
             cliente_info = cursor.fetchone()
-            nombre_cliente = cliente_info[0] if cliente_info else "Desconocido"
             
             # Cuento cuántos vehículos tiene el cliente
             cursor = self.db.execute_query('SELECT COUNT(*) FROM vehiculos WHERE cliente_id = ?', (cliente_id,))
@@ -134,27 +132,13 @@ class ClienteManager:
             ''', (cliente_id,))
             cantidad_ordenes = cursor.fetchone()[0]
             
-            # Pido confirmación
-            confirmacion = messagebox.askyesno(
-                "Confirmar eliminación",
-                f"¿Está seguro de eliminar al cliente '{nombre_cliente}'?\n\n"
-                f"Se eliminarán:\n"
-                f"• El cliente: {nombre_cliente}\n"
-                f"• Vehículos: {cantidad_vehiculos}\n"
-                f"• Órdenes de trabajo: {cantidad_ordenes}\n\n"
-                f" Esta acción NO se puede deshacer."
-            )
-            
-            if not confirmacion:
-                return " Eliminación cancelada por el usuario"
-            
             # Elimino el cliente (las claves foráneas eliminarán en cascada)
             self.db.execute_query('DELETE FROM clientes WHERE id = ?', (cliente_id,))
             self.db.commit()
             
-            return (f" Cliente '{nombre_cliente}' eliminado exitosamente.\n"
+            return (f" Cliente eliminado exitosamente.\n"
                    f"   Se eliminaron {cantidad_vehiculos} vehículos y {cantidad_ordenes} órdenes de trabajo.")
             
         except sqlite3.Error as e:
-            self.db.conn.rollback()
+            self.db.rollback()
             return f" Error al eliminar cliente: {e}"

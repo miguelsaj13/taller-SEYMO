@@ -1,5 +1,4 @@
 import sqlite3
-from tkinter import messagebox
 from taller.database.database_manager import DatabaseManager
 from taller.utils.validator import Validator
 from typing import List, Tuple
@@ -58,20 +57,7 @@ class EmpleadoManager:
             
             # Cuento cuántas órdenes tiene asignadas el empleado
             cursor = self.db.execute_query('SELECT COUNT(*) FROM ordenes_trabajo WHERE empleado_id = ?', (empleado_id,))
-            cantidad_ordenes = cursor.fetchone()[0]
-            
-            # Pido confirmación
-            confirmacion = messagebox.askyesno(
-                "Confirmar eliminación",
-                f"¿Está seguro de eliminar al empleado '{empleado_info[0]}'?\n\n"
-                f"Teléfono: {empleado_info[1]}\n"
-                f"Órdenes asignadas: {cantidad_ordenes}\n\n"
-                f" Esta acción NO se puede deshacer.\n"
-                f"Nota: Las órdenes asignadas a este empleado quedarán sin empleado asignado."
-            )
-            
-            if not confirmacion:
-                return " Eliminación cancelada por el usuario"
+            cantidad_ordenes = cursor.fetchone()
             
             # Primero actualizo las órdenes para que no tengan empleado asignado
             self.db.execute_query('UPDATE ordenes_trabajo SET empleado_id = NULL WHERE empleado_id = ?', (empleado_id,))
@@ -84,5 +70,5 @@ class EmpleadoManager:
                    f"   Se actualizaron {cantidad_ordenes} órdenes para quitar la asignación.")
             
         except sqlite3.Error as e:
-            self.db.conn.rollback()
+            self.db.rollback()
             return f" Error al eliminar empleado: {e}"

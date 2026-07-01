@@ -1,8 +1,18 @@
-from time import strftime
+from taller.database.database_manager import DatabaseManager
+from analytics.recordatorios_service import RecordatoriosService
+from datetime import datetime
+"""
+DashboardService
 
+Se encarga de obtener toda la información que la
+pantalla principal necesita mostrar.
+
+Su única responsabilidad es proporcionar información
+resumida del estado actual del taller.
+"""
 class DashboardService:
 
-    def __init__(self, db, recordatorios_service):
+    def __init__(self, db: DatabaseManager, recordatorios_service: RecordatoriosService):
         self.db = db
         self.recordatorios_service = recordatorios_service
 
@@ -50,10 +60,12 @@ class DashboardService:
 
         query = '''
             SELECT
-                tipo_servicio,
+                s.nombre,
                 COUNT(*) as cantidad
-            FROM ordenes_trabajo
-            GROUP BY tipo_servicio
+            FROM servicios s
+            JOIN orden_servicios os
+            ON s.id = os.servicio_id
+            GROUP BY s.id
             ORDER BY cantidad DESC
             LIMIT ?
         '''
@@ -86,5 +98,6 @@ class DashboardService:
             "ganancia_mes": self.obtener_ganancia_mes(),
             "ordenes_mes": self.obtener_ordenes_mes(),
             "servicios_frecuentes": self.obtener_servicios_frecuentes(),
-            "recordatorios": self.obtener_recordatorios()
+            "recordatorios": self.obtener_recordatorios(),
+            "ultima_actualizacion": datetime.now()
         }
